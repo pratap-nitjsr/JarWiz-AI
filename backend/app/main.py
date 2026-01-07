@@ -63,3 +63,12 @@ async def shutdown_event():
     """Shutdown tasks"""
     logger.info("Shutting down Multi-modal RAG Chatbot API")
 
+
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(
+#         "app.main:app",
+#         host=settings.backend_host,
+#         port=settings.backend_port,
+#         # reload=True
+#     )

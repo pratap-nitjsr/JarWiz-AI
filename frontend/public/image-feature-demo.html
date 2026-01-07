@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat with Images - Example</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px;
+            margin: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #1a202c;
+            margin-top: 0;
+            font-size: 28px;
+        }
+        .message {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #667eea;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        .message-content {
+            flex: 1;
+        }
+        .bubble {
+            background: #f7fafc;
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
+        .bubble.user {
+            background: #667eea;
+            color: white;
+        }
+        .timestamp {
+            font-size: 12px;
+            color: #718096;
+        }
+        .section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #4a5568;
+            margin: 16px 0 8px 0;
+        }
+        .images-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .image-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+            background: white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .image-placeholder {
+            width: 100%;
+            height: 160px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 14px;
+            text-align: center;
+            padding: 20px;
+        }
+        .image-caption {
+            padding: 12px;
+            background: #f7fafc;
+            border-top: 1px solid #e2e8f0;
+        }
+        .caption-text {
+            font-size: 12px;
+            color: #2d3748;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+        .image-meta {
+            font-size: 11px;
+            color: #718096;
+        }
+        .citations {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .citation {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .citation:hover {
+            border-color: #667eea;
+            background: #f7fafc;
+        }
+        .citation-page {
+            font-weight: 600;
+            color: #667eea;
+        }
+        .sources {
+            margin-top: 12px;
+        }
+        .source-item {
+            font-size: 12px;
+            color: #4a5568;
+            margin-bottom: 4px;
+        }
+        @media (max-width: 600px) {
+            .images-grid {
+                grid-template-columns: 1fr;
+            }
+            .container {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📸 Chat with Images Feature Demo</h1>
+        <p style="color: #718096; margin-bottom: 32px;">
+            Now your chatbot displays relevant images from PDFs automatically!
+        </p>
+
+        <!-- User Message -->
+        <div class="message">
+            <div class="avatar">U</div>
+            <div class="message-content">
+                <div class="bubble user">
+                    What does the neural network architecture look like in the paper?
+                </div>
+                <div class="timestamp">Just now</div>
+            </div>
+        </div>
+
+        <!-- Assistant Message with Images -->
+        <div class="message">
+            <div class="avatar" style="background: #48bb78;">AI</div>
+            <div class="message-content">
+                <div class="bubble">
+                    The paper presents a convolutional neural network (CNN) architecture with multiple layers. The network consists of convolutional layers for feature extraction, followed by pooling layers for dimensionality reduction, and fully connected layers for classification. The architecture shows a systematic progression from input to output with skip connections for improved gradient flow.
+                </div>
+                <div class="timestamp">Just now</div>
+
+                <!-- Relevant Images Section -->
+                <div class="section-title">Relevant Images:</div>
+                <div class="images-grid">
+                    <div class="image-card">
+                        <div class="image-placeholder">
+                            🧠<br>CNN Architecture<br>Diagram
+                        </div>
+                        <div class="image-caption">
+                            <div class="caption-text">
+                                A diagram showing the convolutional neural network architecture with multiple convolution layers, pooling layers, and fully connected layers
+                            </div>
+                            <div class="image-meta">
+                                Page 5 • Relevance: 94%
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="image-card">
+                        <div class="image-placeholder">
+                            📊<br>Layer Connection<br>Flowchart
+                        </div>
+                        <div class="image-caption">
+                            <div class="caption-text">
+                                A flowchart depicting the layer connections and data flow through the neural network architecture
+                            </div>
+                            <div class="image-meta">
+                                Page 6 • Relevance: 87%
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Citations Section -->
+                <div class="section-title">Citations:</div>
+                <div class="citations">
+                    <div class="citation">
+                        <div class="citation-page">Page 5</div>
+                        <div style="font-size: 11px; color: #718096; margin-top: 2px;">
+                            Relevance: 94%
+                        </div>
+                    </div>
+                    <div class="citation">
+                        <div class="citation-page">Page 6</div>
+                        <div style="font-size: 11px; color: #718096; margin-top: 2px;">
+                            Relevance: 87%
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sources Section -->
+                <div class="section-title">Sources:</div>
+                <div class="sources">
+                    <div class="source-item">📄 Page 5</div>
+                    <div class="source-item">📄 Page 6</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Feature Highlights -->
+        <div style="margin-top: 48px; padding: 24px; background: #f7fafc; border-radius: 12px; border-left: 4px solid #667eea;">
+            <h3 style="margin-top: 0; color: #1a202c;">✨ Key Features</h3>
+            <ul style="color: #4a5568; line-height: 1.8;">
+                <li><strong>Automatic Detection:</strong> Images are shown automatically when relevant to your query</li>
+                <li><strong>AI Captions:</strong> Each image has an AI-generated description</li>
+                <li><strong>Page References:</strong> Know exactly which page each image came from</li>
+                <li><strong>Relevance Scores:</strong> See how confident the system is about each image</li>
+                <li><strong>Responsive Grid:</strong> Beautiful layout on both desktop and mobile</li>
+            </ul>
+        </div>
+
+        <div style="margin-top: 24px; padding: 16px; background: #fff5f5; border-radius: 8px; border: 1px solid #fc8181;">
+            <strong style="color: #c53030;">📝 Note:</strong>
+            <span style="color: #742a2a;">
+                This is a visual mockup. In the actual application, you'll see real images extracted from your PDF documents!
+            </span>
+        </div>
+    </div>
+</body>
+</html>

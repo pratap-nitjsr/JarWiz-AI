@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     serper_api_key: str
     
     # Backend Configuration
-    # backend_host: str = "0.0.0.0"
-    # backend_port: int = 8000
+    backend_host: str
+    backend_port: int
     upload_dir: str = "./uploads"
     max_file_size: int = 50000000  # 50MB
     

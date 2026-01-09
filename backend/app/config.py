@@ -32,11 +32,10 @@ class Settings(BaseSettings):
     # Model Configuration
     gemini_model: str = "gemini-1.5-pro"
     embedding_model: str = "models/embedding-001"  # Google Generative AI embedding model
-    blip2_model: str = "Salesforce/blip2-opt-2.7b"
     
     # VLM Configuration (Vision Language Model for image captioning)
-    use_gemini_vlm: bool = False  # If True, use Gemini for image captioning; if False, use BLIP-2
-    gemini_vlm_model: str = "gemini-1.5-flash"  # Gemini model for vision tasks (faster than pro)
+    # Always use Gemini VLM - BLIP-2 removed to avoid heavy dependencies
+    gemini_vlm_model: str = "gemini-1.5-flash"  # Gemini model for vision tasks
     
     # RAG Configuration
     chunk_size: int = 1000

@@ -31,8 +31,6 @@ def get_image_processor() -> ImageProcessor:
     global _image_processor
     if _image_processor is None:
         _image_processor = ImageProcessor(
-            use_gemini_vlm=settings.use_gemini_vlm,
-            blip2_model_name=settings.blip2_model,
             gemini_vlm_model=settings.gemini_vlm_model,
             google_api_key=settings.google_api_key
         )

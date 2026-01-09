@@ -8,8 +8,8 @@ export interface UploadResponse {
 
 export interface ChatRequest {
   query: string;
-  document_id?: string;  // Optional: If not provided, uses web search only
-  include_web_search?: boolean;
+  document_ids?: string[];  // Multiple documents support
+  search_mode?: 'vector_only' | 'web_only' | 'both' | 'none';  // Default: 'both'
   conversation_history?: Array<{
     role: string;
     content: string;
@@ -95,11 +95,11 @@ export interface ChatState {
 
 export interface DocumentsState {
   documents: Document[];
-  selectedDocumentId: string | null;
-  selectedDocumentName: string | null;
+  selectedDocumentIds: string[];  // Support multiple documents
+  selectedDocumentNames: string[];  // Track names for display
   addDocument: (document: Document) => void;
   removeDocument: (documentId: string) => void;
-  selectDocument: (documentId: string, documentName: string) => void;
+  toggleDocumentSelection: (documentId: string, documentName: string) => void;  // Toggle instead of select
   clearSelection: () => void;
 }
 

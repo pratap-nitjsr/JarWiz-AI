@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Send } from 'lucide-react';
+import { Send, Database, Globe, Check } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { VoiceInput } from './VoiceInput';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -20,11 +20,22 @@ interface ChatInterfaceProps {
 
 export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
   const [inputText, setInputText] = useState('');
+  const [useVectorDB, setUseVectorDB] = useState(true);
+  const [useWebSearch, setUseWebSearch] = useState(true);
+  const [useStreaming, setUseStreaming] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const { messages, currentDocument, isLoading, error, addMessage, setLoading, setError } =
     useChatStore();
-  const { selectedDocumentName } = useDocumentsStore();
+  const { selectedDocumentIds, selectedDocumentNames } = useDocumentsStore();
+
+  // Calculate search mode from toggles
+  const getSearchMode = (): 'vector_only' | 'web_only' | 'both' | 'none' => {
+    if (useVectorDB && useWebSearch) return 'both';
+    if (useVectorDB && !useWebSearch) return 'vector_only';
+    if (!useVectorDB && useWebSearch) return 'web_only';
+    return 'none';
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -57,27 +68,86 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
         timestamp: msg.timestamp.toISOString()
       }));
 
-      const response = await apiClient.sendQuery({
-        query: content.trim(),
-        document_id: currentDocument?.id || undefined, // Optional: If no document, use web search only
-        include_web_search: true,
-        conversation_history: conversationHistory, // MEMORY: Include conversation history
-      });
+      if (useStreaming) {
+        // Streaming mode
+        let streamingAnswer = '';
+        const streamingMessageId = generateId();
+        
+        // Add empty assistant message that will be updated
+        const assistantMessage: Message = {
+          id: streamingMessageId,
+          role: 'assistant',
+          content: '',
+          timestamp: new Date(),
+        };
+        addMessage(assistantMessage);
 
-      const assistantMessage: Message = {
-        id: generateId(),
-        role: 'assistant',
-        content: response.answer,
-        timestamp: new Date(),
-        citations: response.citations,
-        sources: response.sources,
-        relevant_images: response.relevant_images,
-        web_search_used: response.web_search_used,
-        web_search_reason: response.web_search_reason,
-        document_confidence: response.document_confidence,
-      };
+        await apiClient.sendQueryStream(
+          {
+            query: content.trim(),
+            document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
+            search_mode: getSearchMode(),
+            conversation_history: conversationHistory,
+          },
+          // On chunk
+          (chunk: string) => {
+            streamingAnswer += chunk;
+            // Update the message content
+            useChatStore.setState(state => ({
+              messages: state.messages.map(msg =>
+                msg.id === streamingMessageId
+                  ? { ...msg, content: streamingAnswer }
+                  : msg
+              )
+            }));
+          },
+          // On done (metadata)
+          (metadata: any) => {
+            useChatStore.setState(state => ({
+              messages: state.messages.map(msg =>
+                msg.id === streamingMessageId
+                  ? {
+                      ...msg,
+                      citations: metadata.citations,
+                      sources: metadata.sources,
+                      web_search_used: metadata.web_search_used,
+                    }
+                  : msg
+              )
+            }));
+            setLoading(false);
+          },
+          // On error
+          (error: string) => {
+            setError(error);
+            setLoading(false);
+          }
+        );
+      } else {
+        // Non-streaming mode
+        const response = await apiClient.sendQuery({
+          query: content.trim(),
+          document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
+          search_mode: getSearchMode(),
+          conversation_history: conversationHistory,
+        });
 
-      addMessage(assistantMessage);
+        const assistantMessage: Message = {
+          id: generateId(),
+          role: 'assistant',
+          content: response.answer,
+          timestamp: new Date(),
+          citations: response.citations,
+          sources: response.sources,
+          relevant_images: response.relevant_images,
+          web_search_used: response.web_search_used,
+          web_search_reason: response.web_search_reason,
+          document_confidence: response.document_confidence,
+        };
+
+        addMessage(assistantMessage);
+        setLoading(false);
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to get response';
       setError(errorMessage);
@@ -104,13 +174,21 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
     handleSendMessage(inputText);
   };
 
-  if (!currentDocument) {
+  // Auto-adjust toggles based on document selection
+  useEffect(() => {
+    if (selectedDocumentIds.length === 0) {
+      // No documents: disable vector DB
+      setUseVectorDB(false);
+    }
+  }, [selectedDocumentIds]);
+
+  if (selectedDocumentIds.length === 0) {
     return (
       <div className="flex flex-col h-full">
         {/* Header */}
         <div className="border-b p-4">
-          <h2 className="text-lg font-semibold">💬 Web Search Chat</h2>
-          <p className="text-sm text-gray-500">Ask anything - powered by web search</p>
+          <h2 className="text-lg font-semibold">💬 AI Assistant</h2>
+          <p className="text-sm text-gray-500">No documents selected - Select documents to chat</p>
         </div>
 
         {/* Messages */}
@@ -132,7 +210,7 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
             <MessageBubble 
               key={message.id} 
               message={message}
-              filename={selectedDocumentName || undefined}
+              filename={selectedDocumentNames.length > 0 ? selectedDocumentNames.join(', ') : undefined}
               totalPages={undefined}
               onViewPage={onViewPage}
             />
@@ -156,6 +234,26 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
 
         {/* Input */}
         <div className="border-t p-4 space-y-3">
+          {/* Search Mode Selector */}
+          <div className="flex items-center gap-3 pb-2">
+            <span className="text-sm text-gray-600 font-medium">Search:</span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={useWebSearch ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setUseWebSearch(!useWebSearch)}
+                className="flex items-center gap-1.5 relative pr-7"
+              >
+                <Globe className="h-3.5 w-3.5" />
+                <span className="text-xs">Web Search</span>
+                {useWebSearch && (
+                  <Check className="h-3 w-3 absolute right-1.5" />
+                )}
+              </Button>
+            </div>
+          </div>
+
           <VoiceInput onTranscriptComplete={handleVoiceTranscript} />
 
           <form onSubmit={handleSubmit} className="flex gap-2">
@@ -189,8 +287,12 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="border-b p-4">
-        <h2 className="text-lg font-semibold">{currentDocument.filename}</h2>
-        <p className="text-sm text-gray-500">{currentDocument.total_pages} pages</p>
+        <h2 className="text-lg font-semibold">
+          📚 {selectedDocumentIds.length} Document{selectedDocumentIds.length !== 1 ? 's' : ''} Selected
+        </h2>
+        <p className="text-sm text-gray-500 truncate">
+          {selectedDocumentNames.join(', ')}
+        </p>
       </div>
 
       {/* Messages */}
@@ -207,7 +309,7 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
           <MessageBubble 
             key={message.id} 
             message={message}
-            filename={selectedDocumentName || undefined}
+            filename={selectedDocumentNames.length > 0 ? selectedDocumentNames.join(', ') : undefined}
             totalPages={currentDocument?.total_pages}
             onViewPage={onViewPage}
           />
@@ -231,6 +333,45 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
 
       {/* Input */}
       <div className="border-t p-4 space-y-3">
+        {/* Search Mode Selector */}
+        <div className="flex items-center gap-3 pb-2">
+          <span className="text-sm text-gray-600 font-medium">Search:</span>
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              type="button"
+              variant={useVectorDB ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setUseVectorDB(!useVectorDB)}
+              className="flex items-center gap-1.5 relative pr-7"
+            >
+              <Database className="h-3.5 w-3.5" />
+              <span className="text-xs">Vector DB</span>
+              {useVectorDB && (
+                <Check className="h-3 w-3 absolute right-1.5" />
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant={useWebSearch ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setUseWebSearch(!useWebSearch)}
+              className="flex items-center gap-1.5 relative pr-7"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              <span className="text-xs">Web Search</span>
+              {useWebSearch && (
+                <Check className="h-3 w-3 absolute right-1.5" />
+              )}
+            </Button>
+          </div>
+          <span className="text-xs text-gray-500">
+            {!useVectorDB && !useWebSearch && '(Pure LLM)'}
+            {useVectorDB && useWebSearch && '(Hybrid)'}
+            {useVectorDB && !useWebSearch && '(Document only)'}
+            {!useVectorDB && useWebSearch && '(Web only)'}
+          </span>
+        </div>
+
         <VoiceInput onTranscriptComplete={handleVoiceTranscript} />
 
         <form onSubmit={handleSubmit} className="flex gap-2">

@@ -9,6 +9,8 @@ class UploadResponse(BaseModel):
     document_id: str
     filename: str
     total_pages: int
+    title: Optional[str] = None
+    description: Optional[str] = None
     is_duplicate: bool = False
     message: str = "Document uploaded and processed successfully"
 
@@ -16,9 +18,9 @@ class UploadResponse(BaseModel):
 class ChatRequest(BaseModel):
     """Request for chat query"""
     query: str
-    document_id: Optional[str] = None  # Optional: If None, uses only web search
-    include_web_search: bool = True
-    conversation_history: List[dict] = Field(default_factory=list)  # NEW: Memory
+    document_ids: Optional[List[str]] = None  # Multiple documents support
+    search_mode: str = "both"  # "vector_only", "web_only", "both", "none"
+    conversation_history: List[dict] = Field(default_factory=list)
 
 
 class ConversationMessage(BaseModel):

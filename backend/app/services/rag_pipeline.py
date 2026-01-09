@@ -47,70 +47,58 @@ class RAGPipeline:
     async def query(
         self,
         user_query: str,
-        document_id: Optional[str] = None,  # Optional: If None, uses only web search
-        include_web_search: bool = True,
+        document_ids: Optional[List[str]] = None,
+        search_mode: str = "both",  # "vector_only", "web_only", "both", "none"
         top_k: int = 5,
         conversation_history: List[dict] = None
     ) -> ChatResponse:
         """
-        Execute complete RAG pipeline with conditional web search and memory
+        Execute RAG pipeline with flexible search modes and multi-document support
         
         Args:
             user_query: User's question
-            document_id: ID of the document to query (None = web search only mode)
-            include_web_search: Whether to consider web search (conditional)
-            top_k: Number of top results to retrieve
+            document_ids: List of document IDs to query (supports multiple documents)
+            search_mode: Search strategy - "vector_only", "web_only", "both", "none"
+            top_k: Number of top results to retrieve per document
             conversation_history: Previous conversation messages for context
             
         Returns:
             ChatResponse with answer and citations
         """
         try:
-            logger.info(f"Executing RAG query: {user_query[:50]}...")
+            logger.info(f"Executing RAG query with mode '{search_mode}' across {len(document_ids) if document_ids else 0} documents: {user_query[:50]}...")
             
             # Initialize empty results
             search_results = []
             document_chunks = []
             document_confidence = 0.0
-            
-            # Step 1 & 2: Only search documents if document_id is provided
-            if document_id:
-                # Embed user query
-                query_embedding = await self.embedding_service.embed_query(user_query)
-                
-                # Search vector store for relevant chunks
-                search_results = await self.vector_store.search(
-                    query_embedding=query_embedding,
-                    top_k=top_k,
-                    filter_dict={"document_id": document_id}
-                )
-                
-                # Convert SearchResults to Chunks for LLM
-                document_chunks = self._search_results_to_chunks(search_results)
-                
-                # Calculate document confidence
-                document_confidence = self._calculate_document_confidence(search_results)
-            else:
-                logger.info("No document_id provided - using web search only mode")
-            
-            # Step 3: Evaluate document confidence and decide on web search
-            should_use_web = self._should_perform_web_search(
-                user_query=user_query,
-                document_confidence=document_confidence,
-                include_web_search=include_web_search
-            )
-            
-            logger.info(f"Document confidence: {document_confidence:.2%}, Web search: {should_use_web}")
-            
-            # Step 4: Conditional web search
             web_results = []
             web_search_reason = None
-            if should_use_web:
-                web_results = await self.web_search.search(user_query, num_results=3)
-                web_search_reason = self._get_web_search_reason(document_confidence, user_query)
-                logger.info(f"Web search performed: {web_search_reason}")
             
-            # Step 5: Generate answer with LLM (WITH MEMORY)
+            # Step 1: Vector DB Search (if mode allows and documents provided)
+            if search_mode in ["vector_only", "both"] and document_ids and len(document_ids) > 0:
+                query_embedding = await self.embedding_service.embed_query(user_query)
+                search_results = await self.vector_store.search(
+                    query_embedding=query_embedding,
+                    top_k=top_k * len(document_ids),  # Get more results for multiple documents
+                    document_ids=document_ids  # Search across multiple documents
+                )
+                document_chunks = self._search_results_to_chunks(search_results)
+                document_confidence = self._calculate_document_confidence(search_results)
+                logger.info(f"Vector search across {len(document_ids)} documents: {len(document_chunks)} chunks, confidence: {document_confidence:.2%}")
+            
+            # Step 2: Web Search (if mode allows)
+            if search_mode in ["web_only", "both"]:
+                web_results = await self.web_search.search(user_query, num_results=3)
+                web_search_reason = f"Search mode: {search_mode}"
+                logger.info(f"Web search: {len(web_results)} results")
+            elif search_mode == "both" and document_confidence < 0.5:
+                # Auto web search if vector results are weak
+                web_results = await self.web_search.search(user_query, num_results=3)
+                web_search_reason = "Low document confidence, supplementing with web search"
+                logger.info(f"Auto web search triggered: {web_search_reason}")
+            
+            # Step 3: Generate answer with LLM
             answer_with_citations = await self.llm_service.generate_answer(
                 query=user_query,
                 document_chunks=document_chunks,
@@ -125,14 +113,16 @@ class RAGPipeline:
                 search_results=search_results
             )
             
-            # Step 7: Create source objects
+            # Step 4: Create source objects
             sources = self._create_sources(document_chunks, web_results)
             
-            # Step 8: Extract relevant images from chunks
-            relevant_images = await self._extract_relevant_images(
-                document_chunks=document_chunks,
-                search_results=search_results
-            )
+            # Step 5: Extract relevant images from chunks (only if vector search was used)
+            relevant_images = []
+            if search_mode in ["vector_only", "both"] and search_results:
+                relevant_images = await self._extract_relevant_images(
+                    document_chunks=document_chunks,
+                    search_results=search_results
+                )
             
             # Create response
             response = ChatResponse(
@@ -141,23 +131,9 @@ class RAGPipeline:
                 sources=sources,
                 relevant_images=relevant_images,
                 query=user_query,
-                web_search_used=should_use_web,
+                web_search_used=len(web_results) > 0,
                 web_search_reason=web_search_reason,
                 document_confidence=document_confidence
-            )
-            
-            logger.info("RAG query completed successfully")
-            return response
-            
-        except Exception as e:
-            logger.error(f"Error in RAG pipeline: {e}")
-            raise
-            response = ChatResponse(
-                answer=answer_with_citations.answer,
-                citations=citations,
-                sources=sources,
-                relevant_images=relevant_images,
-                query=user_query
             )
             
             logger.info("RAG query completed successfully")
@@ -394,53 +370,3 @@ class RAGPipeline:
         confidence = sum(top_scores) / len(top_scores) if top_scores else 0.0
         
         return confidence
-    
-    def _should_perform_web_search(
-        self,
-        user_query: str,
-        document_confidence: float,
-        include_web_search: bool
-    ) -> bool:
-        """Determine if web search should be performed"""
-        if not include_web_search:
-            return False
-        
-        # Keywords indicating user wants current/recent information
-        temporal_keywords = ["latest", "recent", "current", "today", "now", "2025", "2026", "update", "news"]
-        query_lower = user_query.lower()
-        wants_current_info = any(keyword in query_lower for keyword in temporal_keywords)
-        
-        # Explicit web search request
-        web_keywords = ["search web", "search the web", "google", "find online", "search online", "look up"]
-        explicit_web_request = any(keyword in query_lower for keyword in web_keywords)
-        
-        # Decision logic
-        if explicit_web_request:
-            return True
-        
-        # ENHANCED: Lower threshold - if confidence < 50%, likely no relevant answer in document
-        if document_confidence < 0.5:  # Changed from 0.3 to 0.5 for better coverage
-            return True
-        
-        if document_confidence < 0.7 and wants_current_info:  # Moderate confidence but wants current info
-            return True
-        
-        return False
-    
-    def _get_web_search_reason(self, document_confidence: float, user_query: str) -> str:
-        """Get human-readable reason for web search"""
-        query_lower = user_query.lower()
-        
-        if any(kw in query_lower for kw in ["search web", "google", "find online", "search online", "look up"]):
-            return "Explicit web search requested"
-        
-        if document_confidence < 0.3:
-            return "No relevant information found in document"
-        
-        if document_confidence < 0.5:
-            return "Document lacks sufficient information"
-        
-        if any(kw in query_lower for kw in ["latest", "recent", "current", "2025", "2026", "news", "update"]):
-            return "Query requests current/updated information"
-        
-        return "Supplementing document information"

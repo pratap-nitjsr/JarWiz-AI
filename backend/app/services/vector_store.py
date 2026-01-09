@@ -16,24 +16,26 @@ class VectorStore:
         api_key: str,
         environment: str,
         index_name: str,
-        dimension: int = 768
+        dimension: int = 768,
+        pool_threads: int = 30
     ):
         """
-        Initialize Pinecone vector store
+        Initialize Pinecone vector store with connection pooling
         
         Args:
             api_key: Pinecone API key
             environment: Pinecone environment
             index_name: Name of the index
             dimension: Dimension of embeddings
+            pool_threads: Number of threads for connection pool (default 30 for parallel uploads)
         """
         self.api_key = api_key
         self.environment = environment
         self.index_name = index_name
         self.dimension = dimension
         
-        # Initialize Pinecone
-        self.pc = Pinecone(api_key=api_key)
+        # Initialize Pinecone with connection pooling for parallel requests
+        self.pc = Pinecone(api_key=api_key, pool_threads=pool_threads)
         
         # Create index if it doesn't exist
         self._ensure_index_exists()
@@ -41,7 +43,7 @@ class VectorStore:
         # Connect to index
         self.index = self.pc.Index(index_name)
         
-        logger.info(f"VectorStore initialized with index: {index_name}")
+        logger.info(f"VectorStore initialized with index: {index_name}, pool_threads: {pool_threads}")
     
     def _ensure_index_exists(self):
         """Create index if it doesn't exist"""
@@ -71,21 +73,29 @@ class VectorStore:
         self,
         chunks: List[Chunk],
         embeddings: List[List[float]],
-        file_hash: Optional[str] = None
+        file_hash: Optional[str] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        batch_size: int = 100,
+        max_concurrent: int = 10
     ):
         """
-        Store chunks in Pinecone with embeddings and metadata
+        Store chunks in Pinecone with embeddings and metadata in PARALLEL batches for speed
         
         Args:
             chunks: List of Chunk objects
             embeddings: List of embedding vectors
             file_hash: Optional SHA-256 hash of source file for deduplication
+            title: Document title for better search
+            description: Document description for better indexing
+            batch_size: Number of vectors per batch (default 100, Pinecone recommended)
+            max_concurrent: Maximum concurrent upsert operations (default 10)
         """
         try:
             if len(chunks) != len(embeddings):
                 raise ValueError("Number of chunks must match number of embeddings")
             
-            logger.info(f"Upserting {len(chunks)} chunks to Pinecone")
+            logger.info(f"Upserting {len(chunks)} chunks to Pinecone in parallel (batch_size={batch_size}, max_concurrent={max_concurrent})")
             
             # Prepare vectors for upsert
             vectors = []
@@ -96,7 +106,9 @@ class VectorStore:
                     "page_number": chunk.page_number,
                     "chunk_type": chunk.chunk_type,
                     "source_document": chunk.metadata.source_document,
-                    "position": chunk.metadata.position
+                    "position": chunk.metadata.position,
+                    "title": title or "",  # Add title for better search
+                    "description": description or "",  # Add description for context
                 }
                 
                 # Add file hash for deduplication
@@ -113,14 +125,30 @@ class VectorStore:
                     "metadata": metadata
                 })
             
-            # Upsert in batches of 100
-            batch_size = 100
-            for i in range(0, len(vectors), batch_size):
-                batch = vectors[i:i + batch_size]
-                self.index.upsert(vectors=batch)
-                logger.debug(f"Upserted batch {i//batch_size + 1}")
+            # Split into batches
+            batches = [vectors[i:i + batch_size] for i in range(0, len(vectors), batch_size)]
+            logger.info(f"Split into {len(batches)} batches for parallel upsert")
             
-            logger.info("Chunks upserted successfully")
+            # Upsert batches in parallel with concurrency limit
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            semaphore = asyncio.Semaphore(max_concurrent)
+            
+            async def upsert_batch(batch: List[dict], batch_num: int):
+                async with semaphore:
+                    # Run sync upsert in thread pool to avoid blocking
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(
+                        None,
+                        lambda: self.index.upsert(vectors=batch)
+                    )
+                    logger.debug(f"Upserted batch {batch_num + 1}/{len(batches)}")
+            
+            # Execute all batches concurrently
+            await asyncio.gather(*[upsert_batch(batch, i) for i, batch in enumerate(batches)])
+            
+            logger.info(f"All {len(chunks)} chunks upserted successfully in parallel")
             
         except Exception as e:
             logger.error(f"Error upserting chunks: {e}")
@@ -130,21 +158,33 @@ class VectorStore:
         self,
         query_embedding: List[float],
         top_k: int = 5,
-        filter_dict: Optional[Dict[str, Any]] = None
+        filter_dict: Optional[Dict[str, Any]] = None,
+        document_ids: Optional[List[str]] = None
     ) -> List[SearchResult]:
         """
-        Semantic search for relevant chunks
+        Semantic search for relevant chunks across single or multiple documents
         
         Args:
             query_embedding: Query embedding vector
             top_k: Number of results to return
             filter_dict: Optional metadata filter
+            document_ids: Optional list of document IDs to search within (for multi-document search)
             
         Returns:
             List of SearchResult objects
         """
         try:
             logger.debug(f"Searching for top {top_k} results")
+            
+            # Build filter for multiple documents if provided
+            if document_ids and len(document_ids) > 0:
+                if len(document_ids) == 1:
+                    # Single document - simple filter
+                    filter_dict = {"document_id": document_ids[0]}
+                else:
+                    # Multiple documents - use $in operator
+                    filter_dict = {"document_id": {"$in": document_ids}}
+                logger.info(f"Searching across {len(document_ids)} documents")
             
             # Perform search
             results = self.index.query(

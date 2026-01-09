@@ -39,6 +39,8 @@ class ProcessedDocument(BaseModel):
     file_hash: str  # SHA-256 hash for deduplication
     pages: List[PageData]
     total_pages: int
+    title: Optional[str] = None  # User-provided document title
+    description: Optional[str] = None  # User-provided description for better indexing
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
     class Config:

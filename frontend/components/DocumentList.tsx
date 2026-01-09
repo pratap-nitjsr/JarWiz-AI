@@ -16,10 +16,10 @@ interface Document {
 
 interface DocumentListProps {
   onSelectDocument: (documentId: string, filename: string) => void;
-  selectedDocumentId?: string;
+  selectedDocumentIds?: string[];  // Multiple selection support
 }
 
-export function DocumentList({ onSelectDocument, selectedDocumentId }: DocumentListProps) {
+export function DocumentList({ onSelectDocument, selectedDocumentIds = [] }: DocumentListProps) {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,9 +53,9 @@ export function DocumentList({ onSelectDocument, selectedDocumentId }: DocumentL
       await api.deleteDocument(documentId);
       setDocuments(documents.filter(doc => doc.document_id !== documentId));
       
-      // If deleted document was selected, clear selection
-      if (selectedDocumentId === documentId) {
-        onSelectDocument("", "");
+      // If deleted document was selected, toggle it out
+      if (selectedDocumentIds.includes(documentId)) {
+        onSelectDocument(documentId, "");  // Toggle off the deleted document
       }
     } catch (err) {
       console.error("Error deleting document:", err);
@@ -121,41 +121,44 @@ export function DocumentList({ onSelectDocument, selectedDocumentId }: DocumentL
           </div>
         ) : (
           <div className="space-y-2">
-            {documents.map((doc) => (
-              <div
-                key={doc.document_id}
-                onClick={() => onSelectDocument(doc.document_id, doc.filename)}
-                className={`
-                  flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all
-                  ${
-                    selectedDocumentId === doc.document_id
-                      ? "bg-primary/10 border-primary"
-                      : "hover:bg-accent hover:border-accent-foreground/20"
-                  }
-                `}
-              >
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <FileText className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{doc.filename}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {doc.total_chunks} chunks
-                    </p>
-                  </div>
-                  {selectedDocumentId === doc.document_id && (
-                    <Badge variant="default">Selected</Badge>
-                  )}
-                </div>
-                <Button
-                  onClick={(e) => handleDelete(doc.document_id, e)}
-                  variant="ghost"
-                  size="sm"
-                  className="ml-2 flex-shrink-0"
+            {documents.map((doc) => {
+              const isSelected = selectedDocumentIds.includes(doc.document_id);
+              return (
+                <div
+                  key={doc.document_id}
+                  onClick={() => onSelectDocument(doc.document_id, doc.filename)}
+                  className={`
+                    flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all
+                    ${
+                      isSelected
+                        ? "bg-primary/10 border-primary"
+                        : "hover:bg-accent hover:border-accent-foreground/20"
+                    }
+                  `}
                 >
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </div>
-            ))}
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <FileText className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{doc.filename}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {doc.total_chunks} chunks
+                      </p>
+                    </div>
+                    {isSelected && (
+                      <Badge variant="default">Selected</Badge>
+                    )}
+                  </div>
+                  <Button
+                    onClick={(e) => handleDelete(doc.document_id, e)}
+                    variant="ghost"
+                    size="sm"
+                    className="ml-2 flex-shrink-0"
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              );
+            })}
           </div>
         )}
       </CardContent>

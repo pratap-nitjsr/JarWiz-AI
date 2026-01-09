@@ -61,7 +61,7 @@ PINECONE_INDEX_NAME=pdf-multimodal-rag
 SERPER_API_KEY=your-serper-api-key
 
 USE_GEMINI_VLM=false
-GEMINI_VLM_MODEL=gemini-1.5-flash
+GEMINI_VLM_MODEL=gemini-2.5-flash
 
 UPLOAD_DIR=uploads
 ```

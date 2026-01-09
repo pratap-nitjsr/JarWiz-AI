@@ -1,5 +1,5 @@
 """Document upload and processing endpoints"""
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from typing import Optional
 import os
 import shutil
@@ -28,13 +28,15 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 @router.post("/upload", response_model=UploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
     document_processor: DocumentProcessor = Depends(get_document_processor),
     document_chunker: DocumentChunker = Depends(get_document_chunker),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     vector_store: VectorStore = Depends(get_vector_store)
 ):
     """
-    Upload and process a PDF document with deduplication
+    Upload and process a PDF document with metadata and deduplication
     
     Steps:
     1. Save uploaded file
@@ -42,11 +44,11 @@ async def upload_document(
     3. If exists, return existing document_id (skip processing)
     4. If new, process PDF (extract text and images with captions)
     5. Chunk document semantically
-    6. Generate embeddings
-    7. Store in vector database with file hash
+    6. Generate embeddings in parallel for speed
+    7. Store in vector database with metadata
     """
     try:
-        logger.info(f"Uploading file: {file.filename}")
+        logger.info(f"Uploading file: {file.filename} (title: {title}, description: {description})")
         # Validate file type
         if not file.filename.endswith('.pdf'):
             raise HTTPException(status_code=400, detail="Only PDF files are supported")
@@ -96,17 +98,32 @@ async def upload_document(
         logger.info("New document detected. Starting processing...")
         
         # Process PDF
-        processed_doc = await document_processor.process_pdf(file_path, file.filename)
+        processed_doc = await document_processor.process_pdf(
+            file_path,
+            file.filename,
+            title=title,
+            description=description
+        )
         
         # Chunk document
         chunks = await document_chunker.chunk_document(processed_doc)
         
-        # Generate embeddings
-        chunk_texts = [chunk.content for chunk in chunks]
-        embeddings = await embedding_service.embed_chunks(chunk_texts)
+        logger.info(f"Generating embeddings for {len(chunks)} chunks in parallel...")
         
-        # Store in vector database with file hash
-        await vector_store.upsert_chunks(chunks, embeddings, file_hash=file_hash)
+        # Generate embeddings IN PARALLEL for speed
+        chunk_texts = [chunk.content for chunk in chunks]
+        embeddings = await embedding_service.embed_chunks_parallel(chunk_texts)
+        
+        logger.info(f"Embeddings generated, storing in vector DB...")
+        
+        # Store in vector database with file hash and metadata
+        await vector_store.upsert_chunks(
+            chunks,
+            embeddings,
+            file_hash=file_hash,
+            title=title,
+            description=description
+        )
         
         logger.info(f"Document processed successfully: {processed_doc.document_id}")
         
@@ -114,6 +131,8 @@ async def upload_document(
             document_id=processed_doc.document_id,
             filename=file.filename,
             total_pages=processed_doc.total_pages,
+            title=title,
+            description=description,
             is_duplicate=False,
             message="Document processed successfully."
         )

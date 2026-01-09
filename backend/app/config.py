@@ -25,12 +25,12 @@ class Settings(BaseSettings):
     max_file_size: int = 50000000  # 50MB
     
     # Model Configuration
-    gemini_model: str = "gemini-1.5-pro"
+    gemini_model: str = "gemini-2.5-flash"
     embedding_model: str = "models/embedding-001"  # Google Generative AI embedding model
     
     # VLM Configuration (Vision Language Model for image captioning)
     # Always use Gemini VLM - BLIP-2 removed to avoid heavy dependencies
-    gemini_vlm_model: str = "gemini-1.5-flash"  # Gemini model for vision tasks
+    gemini_vlm_model: str = "gemini-2.5-flash"  # Gemini model for vision tasks
     
     # RAG Configuration
     chunk_size: int = 1000

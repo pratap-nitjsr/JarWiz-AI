@@ -17,7 +17,7 @@ FastAPI backend for the multi-modal RAG chatbot with PDF processing, image capti
 - **Document Processing**: PyMuPDF (fitz)
 - **Image Processing**: BLIP-2 (Salesforce/blip2-opt-2.7b) via Hugging Face Transformers
 - **Embeddings**: Google Gemini Embedding models via Vertex AI
-- **LLM**: Google Gemini (gemini-1.5-pro) via Vertex AI
+- **LLM**: Google Gemini (gemini-2.5-flash) via Vertex AI
 - **Vector DB**: Pinecone
 - **Web Search**: Serper API
 - **Chunking**: LangChain with RecursiveCharacterTextSplitter
@@ -127,7 +127,7 @@ backend/
 | `PINECONE_ENVIRONMENT` | Pinecone environment | Yes |
 | `PINECONE_INDEX_NAME` | Pinecone index name | Yes |
 | `SERPER_API_KEY` | Serper API key | Yes |
-| `GEMINI_MODEL` | Gemini model name | No (default: gemini-1.5-pro) |
+| `GEMINI_MODEL` | Gemini model name | No (default: gemini-2.5-flash) |
 | `EMBEDDING_MODEL` | Embedding model name | No (default: textembedding-gecko@003) |
 | `BLIP2_MODEL` | BLIP-2 model name | No (default: Salesforce/blip2-opt-2.7b) |
 

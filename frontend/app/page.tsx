@@ -13,14 +13,13 @@ import type { Document } from '@/types';
 
 export default function Home() {
   const { setCurrentDocument, clearMessages } = useChatStore();
-  const { addDocument, selectDocument, selectedDocumentId, selectedDocumentName } = useDocumentsStore();
+  const { addDocument, toggleDocumentSelection, selectedDocumentIds, selectedDocumentNames } = useDocumentsStore();
   const [viewingPage, setViewingPage] = useState<{ filename: string; page: number; totalPages: number } | null>(null);
 
   const handleUploadSuccess = (document: Document) => {
     addDocument(document);
-    setCurrentDocument(document);
-    selectDocument(document.id, document.filename);
-    clearMessages();
+    // Auto-select newly uploaded document
+    toggleDocumentSelection(document.id, document.filename);
   };
 
   const handleUploadError = (error: string) => {
@@ -28,16 +27,8 @@ export default function Home() {
   };
 
   const handleSelectDocument = (documentId: string, documentName: string) => {
-    if (documentId) {
-      selectDocument(documentId, documentName);
-      setCurrentDocument({
-        id: documentId,
-        filename: documentName,
-        total_pages: 0,
-        upload_date: new Date()
-      });
-      clearMessages();
-    }
+    // Toggle selection (click to select, click again to unselect)
+    toggleDocumentSelection(documentId, documentName);
   };
 
   const handleViewPage = (filename: string, pageNumber: number, totalPages: number = 1) => {
@@ -73,7 +64,7 @@ export default function Home() {
 
             <DocumentList
               onSelectDocument={handleSelectDocument}
-              selectedDocumentId={selectedDocumentId || undefined}
+              selectedDocumentIds={selectedDocumentIds}
             />
 
             <Card>
@@ -111,10 +102,10 @@ export default function Home() {
 
           {/* Chat Interface */}
           <div className="lg:col-span-2">
-            {selectedDocumentId && selectedDocumentName && (
+            {selectedDocumentIds.length > 0 && (
               <div className="mb-4">
                 <Badge variant="secondary" className="text-sm">
-                  Chatting with: {selectedDocumentName}
+                  📚 {selectedDocumentIds.length} document{selectedDocumentIds.length > 1 ? 's' : ''} selected: {selectedDocumentNames.join(', ')}
                 </Badge>
               </div>
             )}

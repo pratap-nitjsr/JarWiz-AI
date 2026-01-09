@@ -16,7 +16,7 @@ class UploadResponse(BaseModel):
 class ChatRequest(BaseModel):
     """Request for chat query"""
     query: str
-    document_id: str
+    document_id: Optional[str] = None  # Optional: If None, uses only web search
     include_web_search: bool = True
     conversation_history: List[dict] = Field(default_factory=list)  # NEW: Memory
 

@@ -1,5 +1,5 @@
 """RAG pipeline orchestration"""
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 import fitz
 import base64
@@ -47,7 +47,7 @@ class RAGPipeline:
     async def query(
         self,
         user_query: str,
-        document_id: str,
+        document_id: Optional[str] = None,  # Optional: If None, uses only web search
         include_web_search: bool = True,
         top_k: int = 5,
         conversation_history: List[dict] = None
@@ -57,7 +57,7 @@ class RAGPipeline:
         
         Args:
             user_query: User's question
-            document_id: ID of the document to query
+            document_id: ID of the document to query (None = web search only mode)
             include_web_search: Whether to consider web search (conditional)
             top_k: Number of top results to retrieve
             conversation_history: Previous conversation messages for context
@@ -68,21 +68,32 @@ class RAGPipeline:
         try:
             logger.info(f"Executing RAG query: {user_query[:50]}...")
             
-            # Step 1: Embed user query
-            query_embedding = await self.embedding_service.embed_query(user_query)
+            # Initialize empty results
+            search_results = []
+            document_chunks = []
+            document_confidence = 0.0
             
-            # Step 2: Search vector store for relevant chunks
-            search_results = await self.vector_store.search(
-                query_embedding=query_embedding,
-                top_k=top_k,
-                filter_dict={"document_id": document_id}
-            )
-            
-            # Convert SearchResults to Chunks for LLM
-            document_chunks = self._search_results_to_chunks(search_results)
+            # Step 1 & 2: Only search documents if document_id is provided
+            if document_id:
+                # Embed user query
+                query_embedding = await self.embedding_service.embed_query(user_query)
+                
+                # Search vector store for relevant chunks
+                search_results = await self.vector_store.search(
+                    query_embedding=query_embedding,
+                    top_k=top_k,
+                    filter_dict={"document_id": document_id}
+                )
+                
+                # Convert SearchResults to Chunks for LLM
+                document_chunks = self._search_results_to_chunks(search_results)
+                
+                # Calculate document confidence
+                document_confidence = self._calculate_document_confidence(search_results)
+            else:
+                logger.info("No document_id provided - using web search only mode")
             
             # Step 3: Evaluate document confidence and decide on web search
-            document_confidence = self._calculate_document_confidence(search_results)
             should_use_web = self._should_perform_web_search(
                 user_query=user_query,
                 document_confidence=document_confidence,

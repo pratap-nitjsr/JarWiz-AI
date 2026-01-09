@@ -8,7 +8,7 @@ export interface UploadResponse {
 
 export interface ChatRequest {
   query: string;
-  document_id: string;
+  document_id?: string;  // Optional: If not provided, uses web search only
   include_web_search?: boolean;
   conversation_history?: Array<{
     role: string;

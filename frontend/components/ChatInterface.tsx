@@ -35,7 +35,7 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
   }, [messages]);
 
   const handleSendMessage = async (content: string) => {
-    if (!content.trim() || !currentDocument) return;
+    if (!content.trim()) return;
 
     const userMessage: Message = {
       id: generateId(),
@@ -59,7 +59,7 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
 
       const response = await apiClient.sendQuery({
         query: content.trim(),
-        document_id: currentDocument.id,
+        document_id: currentDocument?.id || undefined, // Optional: If no document, use web search only
         include_web_search: true,
         conversation_history: conversationHistory, // MEMORY: Include conversation history
       });
@@ -106,11 +106,82 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
 
   if (!currentDocument) {
     return (
-      <Card className="flex items-center justify-center h-full p-8">
-        <p className="text-gray-500 text-center">
-          Please upload a PDF document to start chatting
-        </p>
-      </Card>
+      <div className="flex flex-col h-full">
+        {/* Header */}
+        <div className="border-b p-4">
+          <h2 className="text-lg font-semibold">💬 Web Search Chat</h2>
+          <p className="text-sm text-gray-500">Ask anything - powered by web search</p>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.length === 0 && (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center space-y-2">
+                <p className="text-gray-500">
+                  No document selected. Ask me anything!
+                </p>
+                <p className="text-sm text-gray-400">
+                  I'll use web search to answer your questions
+                </p>
+              </div>
+            </div>
+          )}
+
+          {messages.map((message) => (
+            <MessageBubble 
+              key={message.id} 
+              message={message}
+              filename={selectedDocumentName || undefined}
+              totalPages={undefined}
+              onViewPage={onViewPage}
+            />
+          ))}
+
+          {isLoading && (
+            <div className="flex justify-center py-4">
+              <LoadingSpinner />
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Error display */}
+        {error && (
+          <div className="px-4 py-2 bg-red-50 border-t border-red-200">
+            <p className="text-sm text-red-600">{error}</p>
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="border-t p-4 space-y-3">
+          <VoiceInput onTranscriptComplete={handleVoiceTranscript} />
+
+          <form onSubmit={handleSubmit} className="flex gap-2">
+            <Textarea
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="Ask me anything..."
+              className="resize-none"
+              rows={2}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e);
+                }
+              }}
+            />
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!inputText.trim() || isLoading}
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          </form>
+        </div>
+      </div>
     );
   }
 

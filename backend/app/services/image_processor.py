@@ -40,7 +40,7 @@ class ImageProcessor:
             logger.info(f"Loading Gemini VLM model: {self.gemini_vlm_model}")
             self.gemini_model = ChatGoogleGenerativeAI(
                 model=self.gemini_vlm_model,
-                api_key=self.google_api_key,
+                google_api_key=self.google_api_key,
                 vertexai=True
             )
             self._gemini_initialized = True

@@ -51,8 +51,6 @@ def get_embedding_service() -> EmbeddingService:
     global _embedding_service
     if _embedding_service is None:
         _embedding_service = EmbeddingService(
-            project_id=settings.google_cloud_project,
-            location=settings.google_cloud_location,
             model_name=settings.embedding_model
         )
     return _embedding_service
@@ -83,8 +81,6 @@ def get_llm_service() -> LLMService:
     global _llm_service
     if _llm_service is None:
         _llm_service = LLMService(
-            project_id=settings.google_cloud_project,
-            location=settings.google_cloud_location,
             model_name=settings.gemini_model
         )
     return _llm_service

@@ -7,12 +7,7 @@ from typing import Optional
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
     
-    # Google Cloud / Vertex AI
-    google_cloud_project: str
-    google_cloud_location: str = "us-central1"
-    google_application_credentials: Optional[str] = None
-    
-    # Google AI API Key (for embeddings)
+    # Google AI API Key (for Gemini and Embeddings)
     google_api_key: Optional[str] = None
     
     # Pinecone

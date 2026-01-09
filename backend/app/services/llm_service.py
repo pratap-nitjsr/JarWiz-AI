@@ -18,8 +18,6 @@ class LLMService:
     
     def __init__(
         self,
-        project_id: str,
-        location: str = "us-central1",
         model_name: str = "gemini-1.5-pro",
         temperature: float = 0.2
     ):
@@ -27,13 +25,9 @@ class LLMService:
         Initialize LLM service
         
         Args:
-            project_id: Google Cloud project ID
-            location: Google Cloud location
             model_name: Name of the Gemini model
             temperature: Temperature for generation
         """
-        self.project_id = project_id
-        self.location = location
         self.model_name = model_name
         
         # Initialize Gemini LLM

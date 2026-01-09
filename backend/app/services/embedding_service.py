@@ -1,5 +1,4 @@
-"""Embedding service using Google Gemini via Vertex AI"""
-from google.cloud import aiplatform
+"""Embedding service using Google Gemini"""
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from typing import List
 import logging
@@ -13,26 +12,17 @@ class EmbeddingService:
     
     def __init__(
         self,
-        project_id: str,
-        location: str = "us-central1",
         model_name: str = "text-embedding-004"
     ):
         """
         Initialize embedding service
         
         Args:
-            project_id: Google Cloud project ID
-            location: Google Cloud location
-            model_name: Name of the embedding model (use 'models/embedding-001' for Google AI)
+            model_name: Name of the embedding model
         """
-        self.project_id = project_id
-        self.location = location
         self.model_name = model_name
         
-        # Initialize Vertex AI (still needed for other services)
-        aiplatform.init(project=project_id, location=location)
-        
-        # Initialize embeddings with the new GoogleGenerativeAIEmbeddings
+        # Initialize embeddings with GoogleGenerativeAIEmbeddings
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model=model_name,
             google_api_key=settings.google_api_key,

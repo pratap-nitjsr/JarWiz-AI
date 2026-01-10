@@ -159,7 +159,7 @@ export function MessageBubble({
 
                     <CitationCard
                       citation={citation}
-                      filename={filename}
+                      filename={citation.filename || filename}
                       totalPages={totalPages}
                       onViewFullPage={onViewPage}
                     />

@@ -31,6 +31,8 @@ export interface Citation {
   text_snippet: string;
   highlight_regions: BoundingBox[];
   image_base64?: string;
+  filename?: string;  // Document filename for this citation
+  document_id?: string;  // Document ID for this citation
 }
 
 export interface Source {

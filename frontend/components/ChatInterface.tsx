@@ -68,6 +68,9 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
         timestamp: msg.timestamp.toISOString()
       }));
 
+      // Filter out any null/undefined values from document_ids
+      const validDocumentIds = selectedDocumentIds.filter(id => id != null && id !== '');
+
       if (useStreaming) {
         // Streaming mode
         let streamingAnswer = '';
@@ -85,7 +88,7 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
         await apiClient.sendQueryStream(
           {
             query: content.trim(),
-            document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
+            document_ids: validDocumentIds.length > 0 ? validDocumentIds : undefined,
             search_mode: getSearchMode(),
             conversation_history: conversationHistory,
           },
@@ -127,7 +130,7 @@ export function ChatInterface({ onViewPage }: ChatInterfaceProps) {
         // Non-streaming mode
         const response = await apiClient.sendQuery({
           query: content.trim(),
-          document_ids: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
+          document_ids: validDocumentIds.length > 0 ? validDocumentIds : undefined,
           search_mode: getSearchMode(),
           conversation_history: conversationHistory,
         });

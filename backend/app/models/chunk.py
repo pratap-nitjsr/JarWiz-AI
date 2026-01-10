@@ -23,6 +23,7 @@ class Chunk(BaseModel):
     metadata: ChunkMetadata
     embedding: Optional[list] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    filename: Optional[str] = None  # Document filename
     
     class Config:
         arbitrary_types_allowed = True

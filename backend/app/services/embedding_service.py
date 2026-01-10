@@ -1,5 +1,5 @@
 """Embedding service using Google Gemini"""
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_google_vertexai import VertexAIEmbeddings
 from typing import List
 import logging
 import asyncio
@@ -23,15 +23,14 @@ class EmbeddingService:
         """
         self.model_name = model_name
         
-        # Initialize embeddings with GoogleGenerativeAIEmbeddings
-        self.embeddings = GoogleGenerativeAIEmbeddings(
-            model=model_name,
-            # location="asia-south1",
-            google_api_key=settings.google_api_key,
-            vertexai =True
+        # Initialize embeddings with Vertex AI
+        self.embeddings = VertexAIEmbeddings(
+            model_name=model_name,
+            project=settings.google_project_id,
+            location=settings.google_location,
         )
         
-        logger.info(f"EmbeddingService initialized with model: {model_name}")
+        logger.info(f"EmbeddingService initialized with model: {model_name} (Vertex AI)")
     
     async def embed_chunks(self, chunks: List[str]) -> List[List[float]]:
         """

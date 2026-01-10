@@ -3,7 +3,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 from .config import settings
-from .api.routes import documents_router, chat_router, citations_router
+from .api.routes import documents_router, chat_router, citations_router, auth_router
+from .db import MongoDB
 
 # Configure logging
 logging.basicConfig(
@@ -15,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 # Create FastAPI app
 app = FastAPI(
-    title="Multi-modal RAG Chatbot API",
-    description="Voice-enabled chatbot with PDF processing and RAG capabilities",
-    version="1.0.0"
+    title="Multi-modal RAG Chatbot API with Authentication",
+    description="Voice-enabled chatbot with PDF processing, RAG capabilities, and Google OAuth",
+    version="2.0.0"
 )
 
 # Configure CORS
@@ -30,6 +31,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth_router, prefix="/api")  # Authentication routes
 app.include_router(documents_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(citations_router, prefix="/api")
@@ -39,29 +41,38 @@ app.include_router(citations_router, prefix="/api")
 async def root():
     """Root endpoint"""
     return {
-        "message": "Multi-modal RAG Chatbot API",
-        "version": "1.0.0",
-        "status": "running"
+        "message": "Multi-modal RAG Chatbot API with Authentication",
+        "version": "2.0.0",
+        "status": "running",
+        "auth": "Google OAuth enabled"
     }
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy"}
+    return {"status": "healthy", "database": "connected"}
 
 
 @app.on_event("startup")
 async def startup_event():
     """Startup tasks"""
-    logger.info("Starting Multi-modal RAG Chatbot API")
+    logger.info("Starting Multi-modal RAG Chatbot API with Authentication")
     logger.info(f"Upload directory: {settings.upload_dir}")
+    
+    # Connect to MongoDB
+    await MongoDB.connect_db()
+    logger.info("MongoDB connected successfully")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Shutdown tasks"""
     logger.info("Shutting down Multi-modal RAG Chatbot API")
+    
+    # Close MongoDB connection
+    await MongoDB.close_db()
+    logger.info("MongoDB connection closed")
 
 
 if __name__ == "__main__":

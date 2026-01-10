@@ -7,6 +7,7 @@ from .web_search import WebSearchService
 from .llm_service import LLMService
 from .rag_pipeline import RAGPipeline
 from .citation_generator import CitationGenerator
+from .cloudinary_service import CloudinaryService, cloudinary_service
 
 __all__ = [
     "DocumentProcessor",
@@ -17,4 +18,6 @@ __all__ = [
     "LLMService",
     "RAGPipeline",
     "CitationGenerator",
+    "CloudinaryService",
+    "cloudinary_service",
 ]

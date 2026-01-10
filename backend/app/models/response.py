@@ -38,6 +38,8 @@ class Citation(BaseModel):
     text_snippet: str
     highlight_regions: List[BoundingBox] = Field(default_factory=list)
     image_base64: Optional[str] = None
+    filename: Optional[str] = None  # Document filename
+    document_id: Optional[str] = None  # Document ID
 
 
 class Source(BaseModel):

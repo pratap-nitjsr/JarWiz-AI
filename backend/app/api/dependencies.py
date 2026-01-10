@@ -32,7 +32,8 @@ def get_image_processor() -> ImageProcessor:
     if _image_processor is None:
         _image_processor = ImageProcessor(
             gemini_vlm_model=settings.gemini_vlm_model,
-            google_api_key=settings.google_api_key
+            google_project_id=settings.google_project_id,
+            google_location=settings.google_location
         )
     return _image_processor
 

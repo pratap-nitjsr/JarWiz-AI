@@ -162,7 +162,8 @@ class RAGPipeline:
                 document_id=result.metadata.get("document_id", ""),
                 page_number=result.page_number,
                 chunk_type=result.chunk_type,
-                metadata=metadata
+                metadata=metadata,
+                filename=result.metadata.get("filename", result.metadata.get("source_document", ""))
             )
             chunks.append(chunk)
         
@@ -202,20 +203,18 @@ class RAGPipeline:
                     max_length=200
                 )
                 
-                # Get document path from metadata
-                document_path = None
-                for chunk in page_chunks:
-                    doc_id = chunk.document_id
-                    # You would need to store document paths somewhere accessible
-                    # For now, we'll generate citations without images
-                    break
+                # Get document info from chunk metadata
+                document_id = page_chunks[0].document_id if page_chunks else None
+                filename = page_chunks[0].filename if page_chunks and hasattr(page_chunks[0], 'filename') else None
                 
                 citation = Citation(
                     citation_id=generate_citation_id(),
                     page_number=page_num,
                     relevance_score=relevance_score,
                     text_snippet=text_snippet,
-                    highlight_regions=[]  # Will be populated by citation generator
+                    highlight_regions=[],  # Will be populated by citation generator
+                    filename=filename,
+                    document_id=document_id
                 )
                 
                 citations.append(citation)

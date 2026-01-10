@@ -5,7 +5,7 @@ import logging
 import io
 import base64
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage
 
 logger = logging.getLogger(__name__)
@@ -16,36 +16,40 @@ class ImageProcessor:
     
     def __init__(
         self, 
-        gemini_vlm_model: str = "gemini-2.5-flash",
-        google_api_key: Optional[str] = None
+        gemini_vlm_model: str = "gemini-1.5-flash",
+        google_api_key: Optional[str] = None,
+        google_project_id: Optional[str] = None,
+        google_location: str = "us-central1"
     ):
         self.gemini_vlm_model = gemini_vlm_model
         self.google_api_key = google_api_key
+        self.google_project_id = google_project_id
+        self.google_location = google_location
         
         # Gemini attributes
         self.gemini_model = None
         self._gemini_initialized = False
         
-        logger.info(f"ImageProcessor initialized with Gemini VLM: {gemini_vlm_model}")
+        logger.info(f"ImageProcessor initialized with Gemini VLM: {gemini_vlm_model} (Vertex AI)")
     
     def _load_gemini_model(self):
-        """Lazy load Gemini VLM via LangChain (non-deprecated)"""
+        """Lazy load Gemini VLM via LangChain (Vertex AI)"""
         if self._gemini_initialized:
             return
         
-        if not self.google_api_key:
-            raise ValueError("Google API key is required for Gemini VLM")
+        if not self.google_project_id:
+            raise ValueError("Google Project ID is required for Gemini VLM")
         
         try:
             logger.info(f"Loading Gemini VLM model: {self.gemini_vlm_model}")
-            self.gemini_model = ChatGoogleGenerativeAI(
-                model=self.gemini_vlm_model,
-                # location="asia-south1",
-                google_api_key=self.google_api_key,
-                vertexai=True
+            self.gemini_model = ChatVertexAI(
+                project=self.google_project_id,
+                location=self.google_location,
+                model_name=self.gemini_vlm_model,
+                
             )
             self._gemini_initialized = True
-            logger.info("Gemini VLM model loaded successfully")
+            logger.info("Gemini VLM model loaded successfully (Vertex AI)")
         except Exception as e:
             logger.error(f"Failed to load Gemini VLM model: {e}")
             raise

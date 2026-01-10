@@ -7,8 +7,10 @@ from typing import Optional
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
     
-    # Google AI API Key (for Gemini and Embeddings)
-    google_api_key: Optional[str] = None
+    # Google Cloud / Vertex AI Configuration
+    google_application_credentials: str | None = None
+    google_project_id: str
+    google_location: str = "us-central1"
     
     # Pinecone
     pinecone_api_key: str
@@ -18,6 +20,26 @@ class Settings(BaseSettings):
     # Serper API
     serper_api_key: str
     
+    # MongoDB Configuration
+    mongodb_url: str = "mongodb://localhost:27017"
+    mongodb_db_name: str = "jarwiz_db"
+    
+    # Google OAuth Configuration
+    google_client_id: str
+    google_client_secret: str
+    google_redirect_uri: str = "http://localhost:3000/auth/callback"
+    
+    # JWT Configuration
+    jwt_secret_key: str
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60  # 1 hour
+    jwt_refresh_token_expire_days: int = 30  # 30 days
+    
+    # Cloudinary Configuration
+    cloudinary_cloud_name: Optional[str] = None
+    cloudinary_api_key: Optional[str] = None
+    cloudinary_api_secret: Optional[str] = None
+    
     # Backend Configuration
     # backend_host: str
     # backend_port: int
@@ -25,12 +47,11 @@ class Settings(BaseSettings):
     max_file_size: int = 50000000  # 50MB
     
     # Model Configuration
-    gemini_model: str = "gemini-2.5-flash"
-    embedding_model: str = "models/embedding-001"  # Google Generative AI embedding model
+    gemini_model: str = "gemini-1.5-flash"
+    embedding_model: str = "text-embedding-004"
     
     # VLM Configuration (Vision Language Model for image captioning)
-    # Always use Gemini VLM - BLIP-2 removed to avoid heavy dependencies
-    gemini_vlm_model: str = "gemini-2.5-flash"  # Gemini model for vision tasks
+    gemini_vlm_model: str = "gemini-1.5-flash"
     
     # RAG Configuration
     chunk_size: int = 1000
@@ -42,6 +63,7 @@ class Settings(BaseSettings):
     
     class Config:
         env_file = ".env"
+        extra="ignore"
         case_sensitive = False
 
 

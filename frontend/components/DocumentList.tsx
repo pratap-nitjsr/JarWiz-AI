@@ -8,10 +8,11 @@ import { FileText, Trash2, RefreshCw } from "lucide-react";
 import api from "@/lib/api";
 
 interface Document {
-  document_id: string;
+  id: string;  // Backend returns "id"
   filename: string;
-  file_hash: string;
-  total_chunks: number;
+  total_pages?: number;
+  title?: string;
+  description?: string;
 }
 
 interface DocumentListProps {
@@ -51,7 +52,7 @@ export function DocumentList({ onSelectDocument, selectedDocumentIds = [] }: Doc
 
     try {
       await api.deleteDocument(documentId);
-      setDocuments(documents.filter(doc => doc.document_id !== documentId));
+      setDocuments(documents.filter(doc => doc.id !== documentId));
       
       // If deleted document was selected, toggle it out
       if (selectedDocumentIds.includes(documentId)) {
@@ -122,11 +123,11 @@ export function DocumentList({ onSelectDocument, selectedDocumentIds = [] }: Doc
         ) : (
           <div className="space-y-2">
             {documents.map((doc) => {
-              const isSelected = selectedDocumentIds.includes(doc.document_id);
+              const isSelected = selectedDocumentIds.includes(doc.id);
               return (
                 <div
-                  key={doc.document_id}
-                  onClick={() => onSelectDocument(doc.document_id, doc.filename)}
+                  key={doc.id}
+                  onClick={() => onSelectDocument(doc.id, doc.filename)}
                   className={`
                     flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all
                     ${
@@ -139,9 +140,9 @@ export function DocumentList({ onSelectDocument, selectedDocumentIds = [] }: Doc
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <FileText className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{doc.filename}</p>
+                      <p className="font-medium truncate">{doc.title || doc.filename}</p>
                       <p className="text-sm text-muted-foreground">
-                        {doc.total_chunks} chunks
+                        {doc.total_pages ? `${doc.total_pages} pages` : doc.filename}
                       </p>
                     </div>
                     {isSelected && (
@@ -149,7 +150,7 @@ export function DocumentList({ onSelectDocument, selectedDocumentIds = [] }: Doc
                     )}
                   </div>
                   <Button
-                    onClick={(e) => handleDelete(doc.document_id, e)}
+                    onClick={(e) => handleDelete(doc.id, e)}
                     variant="ghost"
                     size="sm"
                     className="ml-2 flex-shrink-0"

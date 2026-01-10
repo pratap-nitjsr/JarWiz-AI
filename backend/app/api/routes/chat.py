@@ -4,8 +4,11 @@ from fastapi.responses import StreamingResponse
 import logging
 import json
 from ...models.response import ChatRequest, ChatResponse
+from ...models.auth import User
 from ...services import RAGPipeline
 from ...api.dependencies import get_rag_pipeline
+from ...api.auth_dependencies import get_current_user
+from ...db.mongodb import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -14,10 +17,14 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 @router.post("/query", response_model=ChatResponse)
 async def chat_query(
     request: ChatRequest,
-    rag_pipeline: RAGPipeline = Depends(get_rag_pipeline)
+    current_user: User = Depends(get_current_user),  # 🔐 Require authentication
+    rag_pipeline: RAGPipeline = Depends(get_rag_pipeline),
+    db = Depends(get_db)
 ):
     """
     Process chat query using RAG pipeline with 4 search modes, conversation memory, and multi-document support
+    
+    🔐 **Authentication Required** - Only accessible by authenticated users
     
     Search Modes:
     - vector_only: Use only vector DB (no web search)
@@ -26,14 +33,27 @@ async def chat_query(
     - none: Pure LLM response (no retrieval)
     
     Steps:
-    1. Determine search mode
-    2. Conditionally embed query and search vector store (supports multiple documents)
-    3. Conditionally perform web search
-    4. Generate answer with LLM (with conversation history)
-    5. Create citations
+    1. Verify document ownership (if document_ids provided)
+    2. Determine search mode
+    3. Conditionally embed query and search vector store (supports multiple documents)
+    4. Conditionally perform web search
+    5. Generate answer with LLM (with conversation history)
+    6. Create citations
     """
     try:
-        logger.info(f"Processing chat query (mode: {request.search_mode}, documents: {len(request.document_ids) if request.document_ids else 0}): {request.query[:50]}...")
+        logger.info(f"User {current_user.email} processing chat query (mode: {request.search_mode}, documents: {len(request.document_ids) if request.document_ids else 0}): {request.query[:50]}...")
+        
+        # Verify document ownership if document_ids provided
+        if request.document_ids:
+            for doc_id in request.document_ids:
+                doc = await db.documents.find_one({"document_id": doc_id})
+                if not doc:
+                    raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+                if doc["user_id"] != current_user.id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"You don't have permission to access document {doc_id}"
+                    )
         
         # Execute RAG pipeline with search mode and multiple documents
         response = await rag_pipeline.query(
@@ -43,9 +63,11 @@ async def chat_query(
             conversation_history=request.conversation_history
         )
         
-        logger.info("Chat query processed successfully")
+        logger.info(f"Chat query processed successfully for user {current_user.email}")
         return response
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error processing chat query: {e}")
         raise HTTPException(
@@ -57,19 +79,37 @@ async def chat_query(
 @router.post("/stream")
 async def chat_query_stream(
     request: ChatRequest,
-    rag_pipeline: RAGPipeline = Depends(get_rag_pipeline)
+    current_user: User = Depends(get_current_user),
+    rag_pipeline: RAGPipeline = Depends(get_rag_pipeline),
+    db = Depends(get_db)
 ):
     """
     Process chat query with streaming response and multi-document support
+    
+    🔐 **Authentication Required** - Only accessible by authenticated users
     
     Returns Server-Sent Events (SSE) stream with:
     - data: Text chunks as they are generated
     - event: done - Final metadata (citations, sources, etc.)
     """
+    logger.info(f"Stream request received: query={request.query[:50] if request.query else 'empty'}, user={current_user.email}, user_id={current_user.id}")
     
     async def event_generator():
         try:
-            logger.info(f"Processing streaming chat query (mode: {request.search_mode}, documents: {len(request.document_ids) if request.document_ids else 0}): {request.query[:50]}...")
+            logger.info(f"User {current_user.email} processing streaming chat query (mode: {request.search_mode}, documents: {len(request.document_ids) if request.document_ids else 0}): {request.query[:50]}...")
+            
+            # Verify document ownership if document_ids provided
+            if request.document_ids:
+                for doc_id in request.document_ids:
+                    doc = await db.documents.find_one({"document_id": doc_id})
+                    if not doc:
+                        error_msg = f"Document {doc_id} not found"
+                        yield f"data: {json.dumps({'error': error_msg})}\n\n"
+                        return
+                    if doc["user_id"] != current_user.id:
+                        error_msg = f"You don't have permission to access document {doc_id}"
+                        yield f"data: {json.dumps({'error': error_msg})}\n\n"
+                        return
             
             # Get context based on search mode
             document_chunks = []

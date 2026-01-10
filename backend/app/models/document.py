@@ -32,13 +32,14 @@ class PageData(BaseModel):
 
 
 class ProcessedDocument(BaseModel):
-    """Processed PDF document"""
+    """Processed PDF document with user association"""
     document_id: str
     filename: str
     filepath: str
     file_hash: str  # SHA-256 hash for deduplication
     pages: List[PageData]
     total_pages: int
+    user_id: Optional[str] = None  # User who uploaded the document
     title: Optional[str] = None  # User-provided document title
     description: Optional[str] = None  # User-provided description for better indexing
     created_at: datetime = Field(default_factory=datetime.utcnow)

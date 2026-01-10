@@ -1,5 +1,5 @@
 """LLM service using Google Gemini via Vertex AI"""
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import PromptTemplate
 from typing import List
 import logging
@@ -18,7 +18,7 @@ class LLMService:
     
     def __init__(
         self,
-        model_name: str = "gemini-2.5-flash",
+        model_name: str = "gemini-1.5-flash",
         temperature: float = 0.2
     ):
         """
@@ -30,18 +30,15 @@ class LLMService:
         """
         self.model_name = model_name
         
-        # Initialize Gemini LLM with streaming optimization
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
+        # Initialize Gemini LLM with streaming optimization via Vertex AI
+        self.llm = ChatVertexAI(
+            project=settings.google_project_id,
+            location=settings.google_location,
+            model_name=model_name,
             temperature=temperature,
             max_output_tokens=2048,
-            vertexai=True,
-            # location="asia-south1",
-            google_api_key=settings.google_api_key,
-            # PERFORMANCE: Streaming optimizations
-            streaming=True,  # Enable streaming by default
-            timeout=60,  # 60 second timeout to prevent hanging
-            max_retries=2,  # Reduce retries for faster failure
+            streaming=True,
+            max_retries=2,
         )
         
         # Define prompt template WITH MEMORY
@@ -73,7 +70,7 @@ Answer:""",
             input_variables=["conversation_history", "document_context", "web_context", "question"]
         )
         
-        logger.info(f"LLMService initialized with model: {model_name} (streaming-optimized)")
+        logger.info(f"LLMService initialized with model: {model_name} (Vertex AI)")
     
     def _sanitize_input(self, text: str) -> str:
         """Sanitize user input to prevent injection attacks"""

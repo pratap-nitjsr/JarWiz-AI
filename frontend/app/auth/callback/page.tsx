@@ -27,25 +27,30 @@ function CallbackContent() {
       }
 
       try {
-        console.log('=== OAuth Callback Started ===');
-        console.log('API URL:', process.env.NEXT_PUBLIC_API_URL);
-        console.log('Code:', code?.substring(0, 20) + '...');
+        //console.log('=== OAuth Callback Started ===');
+        //console.log('API URL:', process.env.NEXT_PUBLIC_API_URL);
+        //console.log('Code:', code?.substring(0, 20) + '...');
         
         // Exchange code for tokens
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const redirectUri = process.env.NEXT_PUBLIC_GOOGLE_REDIRECT_URI || `${window.location.origin}/auth/callback`;
+        
         const response = await fetch(`${apiUrl}/api/auth/google/login`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ code }),
+          body: JSON.stringify({ 
+            code,
+            redirect_uri: redirectUri 
+          }),
         });
 
-        console.log('Response status:', response.status);
-        console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+        //console.log('Response status:', response.status);
+        //console.log('Response headers:', Object.fromEntries(response.headers.entries()));
 
         const responseText = await response.text();
-        console.log('Response body:', responseText);
+        //console.log('Response body:', responseText);
 
         if (!response.ok) {
           let errorData;
@@ -59,11 +64,11 @@ function CallbackContent() {
         }
 
         const data = JSON.parse(responseText);
-        console.log('Auth successful:', { 
-          hasAccessToken: !!data.access_token,
-          hasRefreshToken: !!data.refresh_token,
-          user: data.user?.email 
-        });
+        // console.log('Auth successful:', { 
+        //   hasAccessToken: !!data.access_token,
+        //   hasRefreshToken: !!data.refresh_token,
+        //   user: data.user?.email 
+        // });
         
         // Store tokens
         setTokens(data.access_token, data.refresh_token);
@@ -74,7 +79,7 @@ function CallbackContent() {
         // Small delay to ensure state is saved
         await new Promise(resolve => setTimeout(resolve, 200));
 
-        console.log('=== Redirecting to home ===');
+        //console.log('=== Redirecting to home ===');
         // Redirect to home
         router.push('/');
       } catch (error) {

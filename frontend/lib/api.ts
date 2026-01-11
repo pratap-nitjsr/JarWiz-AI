@@ -143,7 +143,7 @@ export const apiClient = {
         }
       }
 
-      console.log('Sending stream request:', JSON.stringify(request));
+      //console.log('Sending stream request:', JSON.stringify(request));
       
       const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
         method: 'POST',

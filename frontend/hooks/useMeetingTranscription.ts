@@ -104,7 +104,7 @@ export function useMeetingTranscription() {
       });
 
       connection.on(LiveTranscriptionEvents.Open, () => {
-        console.log(`[${speaker}] Deepgram connection opened`);
+        //console.log(`[${speaker}] Deepgram connection opened`);
         setState(prev => ({ ...prev, isTranscribing: true }));
       });
 
@@ -123,7 +123,7 @@ export function useMeetingTranscription() {
       });
 
       connection.on(LiveTranscriptionEvents.Close, () => {
-        console.log(`[${speaker}] Deepgram connection closed`);
+        //console.log(`[${speaker}] Deepgram connection closed`);
       });
 
       // Set up audio processing

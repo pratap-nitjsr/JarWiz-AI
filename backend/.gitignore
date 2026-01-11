@@ -40,8 +40,8 @@ uploads/
 
 # Logs
 *.log
+backend/credentials.json
 credentials.json
-
 # OS
 .DS_Store
 Thumbs.db

@@ -1,24 +1,27 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 import api from "@/lib/api";
-import Image from "next/image";
+import type { BoundingBox } from "@/types";
 
 interface FullPageViewerProps {
   filename: string;
   pageNumber: number;
   onClose: () => void;
   totalPages?: number;
+  highlightRegions?: BoundingBox[];
 }
 
-export function FullPageViewer({ filename, pageNumber, onClose, totalPages = 1 }: FullPageViewerProps) {
+export function FullPageViewer({ filename, pageNumber, onClose, totalPages = 1, highlightRegions = [] }: FullPageViewerProps) {
   const [currentPage, setCurrentPage] = useState(pageNumber);
   const [pageImage, setPageImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(100);
+  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
+  const imageRef = useRef<HTMLImageElement>(null);
 
   const fetchPage = async (page: number) => {
     try {
@@ -122,11 +125,41 @@ export function FullPageViewer({ filename, pageNumber, onClose, totalPages = 1 }
               className="flex items-center justify-center"
               style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center', transition: 'transform 0.2s' }}
             >
-              <img
-                src={`data:image/png;base64,${pageImage}`}
-                alt={`Page ${currentPage + 1}`}
-                className="max-w-full h-auto shadow-lg"
-              />
+              <div className="relative inline-block">
+                <img
+                  ref={imageRef}
+                  src={`data:image/png;base64,${pageImage}`}
+                  alt={`Page ${currentPage + 1}`}
+                  className="max-w-full h-auto shadow-lg"
+                  onLoad={(e) => {
+                    const img = e.target as HTMLImageElement;
+                    setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+                  }}
+                />
+                {/* Highlight overlays */}
+                {highlightRegions && highlightRegions.length > 0 && currentPage === pageNumber && imageDimensions.width > 0 && (
+                  <svg
+                    className="absolute top-0 left-0 pointer-events-none"
+                    style={{ width: '100%', height: '100%' }}
+                    viewBox={`0 0 ${imageDimensions.width} ${imageDimensions.height}`}
+                    preserveAspectRatio="none"
+                  >
+                    {highlightRegions.map((region, idx) => (
+                      <rect
+                        key={idx}
+                        x={region.x0}
+                        y={region.y0}
+                        width={region.x1 - region.x0}
+                        height={region.y1 - region.y0}
+                        fill="rgba(255, 255, 0, 0.3)"
+                        stroke="rgba(255, 200, 0, 0.8)"
+                        strokeWidth="2"
+                        className="animate-pulse"
+                      />
+                    ))}
+                  </svg>
+                )}
+              </div>
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground">

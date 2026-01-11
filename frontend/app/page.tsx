@@ -1,19 +1,24 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ChatInterface } from '@/components/ChatInterface';
 import { DocumentUploader } from '@/components/DocumentUploader';
 import { DocumentList } from '@/components/DocumentList';
 import { FullPageViewer } from '@/components/FullPageViewer';
+import PresentationList from '@/components/PresentationList';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { useChatStore } from '@/hooks/useChat';
 import { useDocumentsStore } from '@/hooks/useDocuments';
 import { useAuth } from '@/hooks/useAuth';
+import { Monitor, Mic, FileText, Globe, Search, Eye, Copy } from 'lucide-react';
 import type { Document } from '@/types';
 
 export default function Home() {
+  const router = useRouter();
   const { setCurrentDocument, clearMessages } = useChatStore();
   const { addDocument, toggleDocumentSelection, selectedDocumentIds, selectedDocumentNames } = useDocumentsStore();
   const { user, logout } = useAuth();
@@ -36,6 +41,10 @@ export default function Home() {
 
   const handleViewPage = (filename: string, pageNumber: number, totalPages: number = 1) => {
     setViewingPage({ filename, page: pageNumber, totalPages });
+  };
+
+  const startMeetingSession = () => {
+    router.push('/session');
   };
 
   return (
@@ -97,6 +106,25 @@ export default function Home() {
 
             <Card>
               <CardHeader>
+                <CardTitle className="text-lg">Meeting Assistant</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-600 mb-3">
+                  Join a meeting and get real-time AI assistance with transcription
+                </p>
+                <Button 
+                  onClick={startMeetingSession}
+                  className="w-full"
+                  variant="default"
+                >
+                  <Monitor className="h-4 w-4 mr-2" />
+                  Start Meeting Session
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* <Card>
+              <CardHeader>
                 <CardTitle className="text-lg">Features</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm text-gray-600">
@@ -124,8 +152,12 @@ export default function Home() {
                   <span className="text-green-500">✓</span>
                   <span>Full page viewing</span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-green-500">✓</span>
+                  <span>Meeting transcription & AI assist</span>
+                </div>
               </CardContent>
-            </Card>
+            </Card> */}
           </div>
 
           {/* Chat Interface */}
@@ -141,6 +173,11 @@ export default function Home() {
               <ChatInterface onViewPage={handleViewPage} />
             </Card>
           </div>
+        </div>
+
+        {/* My Presentations Section */}
+        <div className="mt-6 max-w-7xl mx-auto">
+          <PresentationList />
         </div>
 
         {/* Full Page Viewer Modal */}

@@ -110,3 +110,29 @@ export interface VoiceInputState {
   transcript: string;
   error: string | null;
 }
+
+// Meeting Session Types
+export interface TranscriptEntry {
+  id: string;
+  speaker: 'user' | 'remote' | 'unknown';
+  text: string;
+  timestamp: Date;
+  isFinal: boolean;
+}
+
+export interface MeetingSession {
+  id: string;
+  startTime: Date;
+  endTime?: Date;
+  transcripts: TranscriptEntry[];
+  aiResponses: MeetingAIResponse[];
+}
+
+export interface MeetingAIResponse {
+  id: string;
+  question: string;
+  answer: string;
+  sources: Source[];
+  timestamp: Date;
+  searchMode: string;
+}

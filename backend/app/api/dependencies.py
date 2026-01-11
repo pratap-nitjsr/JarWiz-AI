@@ -11,6 +11,7 @@ from ..services import (
     RAGPipeline,
     CitationGenerator
 )
+from ..services.cloudinary_service import CloudinaryService
 from ..utils import DocumentChunker
 
 
@@ -24,6 +25,7 @@ _llm_service = None
 _rag_pipeline = None
 _citation_generator = None
 _document_chunker = None
+_cloudinary_service = None
 
 
 def get_image_processor() -> ImageProcessor:
@@ -119,3 +121,11 @@ def get_rag_pipeline() -> RAGPipeline:
             citation_generator=get_citation_generator()
         )
     return _rag_pipeline
+
+
+def get_cloudinary_service() -> CloudinaryService:
+    """Get CloudinaryService singleton"""
+    global _cloudinary_service
+    if _cloudinary_service is None:
+        _cloudinary_service = CloudinaryService()
+    return _cloudinary_service

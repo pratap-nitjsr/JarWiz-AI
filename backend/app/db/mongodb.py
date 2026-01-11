@@ -52,6 +52,10 @@ class MongoDB:
             await cls.database.documents.create_index("document_id", unique=True)
             await cls.database.documents.create_index([("user_id", 1), ("created_at", -1)])
             
+            # Presentations collection indexes
+            await cls.database.presentations.create_index("user_id")
+            await cls.database.presentations.create_index([("user_id", 1), ("created_at", -1)])
+            
             logger.info("Database indexes created successfully")
             
         except Exception as e:

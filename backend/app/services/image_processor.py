@@ -99,6 +99,58 @@ class ImageProcessor:
         """Generate caption using Gemini VLM"""
         return await self._generate_caption_gemini(image)
     
+    async def extract_text_from_image(self, image: Image.Image) -> str:
+        """
+        Extract text from an image using OCR via Gemini Vision
+        
+        This is useful for charts, diagrams, figures with embedded text,
+        and tables that contain textual information.
+        
+        Args:
+            image: PIL Image object
+            
+        Returns:
+            Extracted text from the image
+        """
+        self._load_gemini_model()
+        
+        try:
+            image_data = self._prepare_image_for_gemini(image)
+            
+            ocr_prompt = (
+                "Extract ALL text visible in this image. Include:\n"
+                "- Labels and annotations\n"
+                "- Axis labels and titles (if chart/graph)\n"
+                "- Legend text\n"
+                "- Any numbers or data values\n"
+                "- Table content (if applicable)\n"
+                "Return ONLY the extracted text, no descriptions. "
+                "If no text is visible, return 'NO_TEXT_FOUND'."
+            )
+            
+            message = HumanMessage(
+                content=[
+                    {"type": "text", "text": ocr_prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
+                    },
+                ]
+            )
+            
+            response = await self.gemini_model.ainvoke([message])
+            extracted_text = response.content.strip()
+            
+            # Return empty string if no text found
+            if extracted_text == "NO_TEXT_FOUND":
+                return ""
+            
+            return extracted_text
+            
+        except Exception as e:
+            logger.error(f"Error extracting text from image: {e}")
+            return ""
+    
     async def generate_captions_batch(
         self,
         images: list[Image.Image],

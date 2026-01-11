@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 from .config import settings
-from .api.routes import documents_router, chat_router, citations_router, auth_router
+from .api.routes import documents_router, chat_router, citations_router, auth_router, presentation_router
 from .db import MongoDB
 
 # Configure logging
@@ -35,6 +35,7 @@ app.include_router(auth_router, prefix="/api")  # Authentication routes
 app.include_router(documents_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(citations_router, prefix="/api")
+app.include_router(presentation_router, prefix="/api")  # Presentation generation routes
 
 
 @app.get("/")

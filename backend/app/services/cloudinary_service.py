@@ -141,6 +141,79 @@ class CloudinaryService:
         except Exception as e:
             logger.error(f"Error generating Cloudinary URL: {e}")
             return None
+    
+    async def upload_presentation(
+        self, 
+        presentation_data: dict, 
+        title: str,
+        user_id: str
+    ) -> Optional[dict]:
+        """
+        Upload a presentation to Cloudinary as JSON
+        
+        Args:
+            presentation_data: Dictionary with presentation data (title, slides, outline)
+            title: Presentation title
+            user_id: User ID who created the presentation
+            
+        Returns:
+            Dictionary with url and public_id if successful, None otherwise
+        """
+        if not self._configured:
+            logger.warning("Cloudinary not configured, skipping presentation upload")
+            return None
+        
+        import tempfile
+        import os
+        import json
+        from datetime import datetime
+        
+        try:
+            # Generate a unique ID for this presentation
+            presentation_id = f"pres_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Create a temporary JSON file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(presentation_data, f, indent=2)
+                temp_path = f.name
+            
+            try:
+                logger.info(f"Uploading presentation {presentation_id} to Cloudinary...")
+                
+                result = cloudinary.uploader.upload(
+                    temp_path,
+                    resource_type="raw",
+                    public_id=f"jarwiz/presentations/{user_id}/{presentation_id}",
+                    folder=f"jarwiz/presentations/{user_id}",
+                    overwrite=True,
+                    use_filename=True,
+                    unique_filename=False,
+                    context={
+                        "title": title,
+                        "presentation_id": presentation_id,
+                        "user_id": user_id
+                    }
+                )
+                
+                cloudinary_url = result.get("secure_url")
+                public_id = result.get("public_id")
+                
+                logger.info(f"Presentation uploaded successfully: {cloudinary_url}")
+                
+                return {
+                    "url": cloudinary_url,
+                    "public_id": public_id,
+                    "format": result.get("format"),
+                    "bytes": result.get("bytes")
+                }
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            
+        except Exception as e:
+            logger.error(f"Error uploading presentation to Cloudinary: {e}")
+            return None
 
 
 # Global instance

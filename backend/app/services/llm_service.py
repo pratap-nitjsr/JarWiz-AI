@@ -41,33 +41,99 @@ class LLMService:
             max_retries=2,
         )
         
-        # Define prompt template WITH MEMORY
-        self.prompt_template = PromptTemplate(
+        # Define prompt templates for different modes
+        self.prompt_template_both = PromptTemplate(
             template="""You are a helpful AI assistant answering questions based on provided context from documents and web search results.
 
 Conversation History:
 {conversation_history}
 
-Context from documents:
+📚 Context from uploaded documents:
 {document_context}
 
-Context from web search:
+🌐 Context from web search:
 {web_context}
 
 User Question: {question}
 
 Instructions:
 1. Consider the conversation history to provide contextual answers
-2. Provide a comprehensive and accurate answer based on the context provided
+2. Prioritize information from documents when available, supplement with web results
 3. For information from documents, cite the page number using the format [Page X]
 4. For information from web sources, cite using the format [Web: Source Title]
-5. If the context doesn't contain enough information, clearly state "I don't have enough information in the document to answer this question accurately."
+5. If neither source has the answer, clearly state that
 6. Be concise but thorough in your response
 7. Never make up information not present in the context
-8. Maintain conversation continuity by referencing previous exchanges when relevant
 
 Answer:""",
             input_variables=["conversation_history", "document_context", "web_context", "question"]
+        )
+        
+        self.prompt_template_docs_only = PromptTemplate(
+            template="""You are a helpful AI assistant answering questions based on uploaded documents.
+
+Conversation History:
+{conversation_history}
+
+📚 Context from uploaded documents:
+{document_context}
+
+User Question: {question}
+
+Instructions:
+1. Consider the conversation history to provide contextual answers
+2. Answer ONLY based on the document context provided above
+3. Cite the page number using the format [Page X] for every piece of information
+4. If the documents don't contain the answer, clearly state "I don't have enough information in the uploaded documents to answer this question."
+5. Be concise but thorough in your response
+6. Never make up information not present in the documents
+
+Answer:""",
+            input_variables=["conversation_history", "document_context", "question"]
+        )
+        
+        self.prompt_template_web_only = PromptTemplate(
+            template="""You are a helpful AI assistant answering questions using web search results.
+
+Conversation History:
+{conversation_history}
+
+🌐 Web Search Results:
+{web_context}
+
+User Question: {question}
+
+Instructions:
+1. Consider the conversation history to provide contextual answers
+2. Answer based on the web search results provided above
+3. Cite sources using the format [Web: Source Title] for every piece of information
+4. If the web results don't contain the answer, clearly state that the search didn't return relevant results
+5. Be concise but thorough in your response
+6. Always indicate when information comes from web sources
+
+Answer:""",
+            input_variables=["conversation_history", "web_context", "question"]
+        )
+        
+        self.prompt_template_general = PromptTemplate(
+            template="""You are a helpful AI assistant having a conversation with the user.
+
+Conversation History:
+{conversation_history}
+
+User Message: {question}
+
+Instructions:
+1. You are in GENERAL CONVERSATION MODE - no documents or web search were used
+2. Consider the conversation history to provide contextual responses
+3. Answer based on your general knowledge
+4. If the user seems to be asking about specific documents, suggest they upload documents or enable web search
+5. Be helpful, friendly, and conversational
+6. If you're unsure about specific facts, acknowledge your limitations
+7. You can help with general questions, explanations, brainstorming, and casual conversation
+
+Response:""",
+            input_variables=["conversation_history", "question"]
         )
         
         logger.info(f"LLMService initialized with model: {model_name} (Vertex AI)")
@@ -110,6 +176,59 @@ Answer:""",
         
         return "\n".join(formatted)
     
+    def _determine_context_mode(self, document_chunks: List[Chunk], web_results: List[WebResult]) -> str:
+        """
+        Determine which context mode to use based on available data
+        
+        Returns:
+            One of: 'both', 'docs_only', 'web_only', 'general'
+        """
+        has_docs = document_chunks and len(document_chunks) > 0
+        has_web = web_results and len(web_results) > 0
+        
+        if has_docs and has_web:
+            return 'both'
+        elif has_docs:
+            return 'docs_only'
+        elif has_web:
+            return 'web_only'
+        else:
+            return 'general'
+    
+    def _create_prompt(
+        self,
+        mode: str,
+        history_text: str,
+        doc_context: str,
+        web_context: str,
+        sanitized_query: str
+    ) -> str:
+        """Create the appropriate prompt based on context mode"""
+        if mode == 'both':
+            return self.prompt_template_both.format(
+                conversation_history=history_text,
+                document_context=doc_context,
+                web_context=web_context,
+                question=sanitized_query
+            )
+        elif mode == 'docs_only':
+            return self.prompt_template_docs_only.format(
+                conversation_history=history_text,
+                document_context=doc_context,
+                question=sanitized_query
+            )
+        elif mode == 'web_only':
+            return self.prompt_template_web_only.format(
+                conversation_history=history_text,
+                web_context=web_context,
+                question=sanitized_query
+            )
+        else:  # general
+            return self.prompt_template_general.format(
+                conversation_history=history_text,
+                question=sanitized_query
+            )
+    
     async def generate_answer(
         self,
         query: str,
@@ -133,7 +252,9 @@ Answer:""",
             AnswerWithCitations object
         """
         try:
-            logger.info("Generating answer with LLM (non-streaming mode)")
+            # Determine context mode
+            mode = self._determine_context_mode(document_chunks, web_results)
+            logger.info(f"Generating answer with LLM (non-streaming mode, context mode: {mode})")
             logger.warning("Using non-streaming mode - consider switching to streaming for better UX")
             
             # SECURITY: Sanitize user query
@@ -148,7 +269,7 @@ Answer:""",
                 doc_context_parts.append(
                     f"[Page {chunk.page_number}] {chunk.content}"
                 )
-            doc_context = "\n\n".join(doc_context_parts) if doc_context_parts else "No document context available."
+            doc_context = "\n\n".join(doc_context_parts)
             
             # Format web context
             web_context_parts = []
@@ -156,14 +277,15 @@ Answer:""",
                 web_context_parts.append(
                     f"[{result.title}]\n{result.snippet}\nURL: {result.url}"
                 )
-            web_context = "\n\n".join(web_context_parts) if web_context_parts else "No web search results available."
+            web_context = "\n\n".join(web_context_parts)
             
-            # Create prompt with memory
-            prompt = self.prompt_template.format(
-                conversation_history=history_text,
-                document_context=doc_context,
+            # Create prompt based on context mode
+            prompt = self._create_prompt(
+                mode=mode,
+                history_text=history_text,
+                doc_context=doc_context,
                 web_context=web_context,
-                question=sanitized_query
+                sanitized_query=sanitized_query
             )
             
             # Generate answer
@@ -182,7 +304,7 @@ Answer:""",
                 cited_chunks=cited_chunks
             )
             
-            logger.info(f"Answer generated with {len(cited_pages)} page citations")
+            logger.info(f"Answer generated (mode: {mode}) with {len(cited_pages)} page citations")
             return result
             
         except Exception as e:
@@ -211,7 +333,9 @@ Answer:""",
             Chunks of text as they are generated (near real-time streaming)
         """
         try:
-            logger.info("Generating streaming answer with LLM (low-latency mode)")
+            # Determine context mode
+            mode = self._determine_context_mode(document_chunks, web_results)
+            logger.info(f"Generating streaming answer with LLM (low-latency mode, context mode: {mode})")
             
             # SECURITY: Sanitize user query
             sanitized_query = self._sanitize_input(query)
@@ -225,7 +349,7 @@ Answer:""",
                 doc_context_parts.append(
                     f"[Page {chunk.page_number}] {chunk.content}"
                 )
-            doc_context = "\n\n".join(doc_context_parts) if doc_context_parts else "No document context available."
+            doc_context = "\n\n".join(doc_context_parts)
             
             # Format web context
             web_context_parts = []
@@ -233,14 +357,15 @@ Answer:""",
                 web_context_parts.append(
                     f"[{result.title}]\n{result.snippet}\nURL: {result.url}"
                 )
-            web_context = "\n\n".join(web_context_parts) if web_context_parts else "No web search results available."
+            web_context = "\n\n".join(web_context_parts)
             
-            # Create prompt with memory
-            prompt = self.prompt_template.format(
-                conversation_history=history_text,
-                document_context=doc_context,
+            # Create prompt based on context mode
+            prompt = self._create_prompt(
+                mode=mode,
+                history_text=history_text,
+                doc_context=doc_context,
                 web_context=web_context,
-                question=sanitized_query
+                sanitized_query=sanitized_query
             )
             
             # PERFORMANCE: Stream answer with immediate first chunk
@@ -250,10 +375,10 @@ Answer:""",
                 if chunk.content:
                     chunk_count += 1
                     if chunk_count == 1:
-                        logger.debug(f"First chunk streamed (low latency achieved)")
+                        logger.debug(f"First chunk streamed (low latency achieved, mode: {mode})")
                     yield chunk.content
             
-            logger.info(f"Streaming answer completed ({chunk_count} chunks)")
+            logger.info(f"Streaming answer completed (mode: {mode}, {chunk_count} chunks)")
             
         except Exception as e:
             logger.error(f"Error generating streaming answer: {e}")
@@ -283,4 +408,42 @@ Answer:"""
             
         except Exception as e:
             logger.error(f"Error generating simple answer: {e}")
+            raise
+
+    async def generate_long_content_stream(self, prompt: str):
+        """
+        Generate long-form content with streaming support (e.g., presentations)
+        Uses extended token limit for longer outputs.
+        
+        Args:
+            prompt: Full prompt for generation
+            
+        Yields:
+            Content chunks as they are generated
+        """
+        try:
+            # Use a longer output limit for presentations
+            long_llm = ChatVertexAI(
+                project=settings.google_project_id,
+                location=settings.google_location,
+                model_name=self.model_name,
+                temperature=0.3,
+                max_output_tokens=8192,  # Extended for presentations
+                streaming=True,
+                max_retries=2,
+            )
+            
+            logger.info("Starting long content generation")
+            chunk_count = 0
+            async for chunk in long_llm.astream(prompt):
+                if chunk.content:
+                    chunk_count += 1
+                    if chunk_count == 1:
+                        logger.info("First chunk received in long content stream")
+                    yield chunk.content
+            
+            logger.info(f"Long content generation completed ({chunk_count} chunks)")
+            
+        except Exception as e:
+            logger.error(f"Error generating long content: {e}", exc_info=True)
             raise

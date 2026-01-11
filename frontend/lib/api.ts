@@ -216,6 +216,237 @@ export const apiClient = {
     const response = await api.get('/health');
     return response.data;
   },
+
+  // Presentation operations
+  suggestPresentationTopic: async (context: string): Promise<{ topic: string }> => {
+    const response = await api.post('/api/presentation/suggest-topic', { context });
+    return response.data;
+  },
+
+  generatePresentationOutline: async (
+    topic: string,
+    numSlides: number,
+    additionalContext: string,
+    onChunk: (chunk: string) => void,
+    onDone: () => void,
+    onError: (error: string) => void
+  ): Promise<void> => {
+    try {
+      // Get auth token
+      let authToken = '';
+      const authStorage = localStorage.getItem('auth-storage');
+      if (authStorage) {
+        try {
+          const { state } = JSON.parse(authStorage);
+          if (state?.accessToken) {
+            authToken = state.accessToken;
+          }
+        } catch (e) {
+          console.error('Error parsing auth storage:', e);
+        }
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/presentation/outline`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authToken ? `Bearer ${authToken}` : '',
+        },
+        body: JSON.stringify({
+          topic,
+          num_slides: numSlides,
+          additional_context: additionalContext,
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          localStorage.removeItem('auth-storage');
+          window.location.href = '/auth/login';
+          throw new Error('Session expired. Please login again.');
+        }
+        const errorBody = await response.text();
+        throw new Error(`HTTP error! status: ${response.status} - ${errorBody}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          onDone();
+          break;
+        }
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'chunk') {
+                onChunk(data.content);
+              } else if (data.type === 'done') {
+                onDone();
+              } else if (data.type === 'error') {
+                onError(data.message);
+              }
+            } catch {
+              // Ignore parse errors for partial data
+            }
+          }
+        }
+      }
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  },
+
+  generatePresentationSlides: async (
+    topic: string,
+    outline: string,
+    additionalInstructions: string,
+    onChunk: (chunk: string) => void,
+    onDone: () => void,
+    onError: (error: string) => void
+  ): Promise<void> => {
+    try {
+      // Get auth token
+      let authToken = '';
+      const authStorage = localStorage.getItem('auth-storage');
+      if (authStorage) {
+        try {
+          const { state } = JSON.parse(authStorage);
+          if (state?.accessToken) {
+            authToken = state.accessToken;
+          }
+        } catch (e) {
+          console.error('Error parsing auth storage:', e);
+        }
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/presentation/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authToken ? `Bearer ${authToken}` : '',
+        },
+        body: JSON.stringify({
+          topic,
+          outline,
+          additional_instructions: additionalInstructions,
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          localStorage.removeItem('auth-storage');
+          window.location.href = '/auth/login';
+          throw new Error('Session expired. Please login again.');
+        }
+        const errorBody = await response.text();
+        throw new Error(`HTTP error! status: ${response.status} - ${errorBody}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          onDone();
+          break;
+        }
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'chunk') {
+                onChunk(data.content);
+              } else if (data.type === 'done') {
+                onDone();
+              } else if (data.type === 'error') {
+                onError(data.message);
+              }
+            } catch {
+              // Ignore parse errors for partial data
+            }
+          }
+        }
+      }
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  },
+
+  savePresentation: async (
+    title: string,
+    slides: any[],
+    outline: string
+  ): Promise<{ success: boolean; url?: string; public_id?: string; presentation_id?: string }> => {
+    const response = await api.post('/api/presentation/save', {
+      title,
+      slides,
+      outline,
+    });
+    return response.data;
+  },
+
+  listPresentations: async (
+    limit: number = 20,
+    skip: number = 0
+  ): Promise<{
+    presentations: Array<{
+      presentation_id: string;
+      title: string;
+      slide_count: number;
+      cloudinary_url?: string;
+      created_at: string;
+    }>;
+    total: number;
+    limit: number;
+    skip: number;
+  }> => {
+    const response = await api.get('/api/presentation/list', {
+      params: { limit, skip }
+    });
+    return response.data;
+  },
+
+  getPresentation: async (
+    presentationId: string
+  ): Promise<{
+    presentation_id: string;
+    title: string;
+    outline: string;
+    slides: any[];
+    slide_count: number;
+    cloudinary_url?: string;
+    created_at: string;
+    updated_at: string;
+  }> => {
+    const response = await api.get(`/api/presentation/${presentationId}`);
+    return response.data;
+  },
+
+  deletePresentation: async (presentationId: string): Promise<{ success: boolean; message: string }> => {
+    const response = await api.delete(`/api/presentation/${presentationId}`);
+    return response.data;
+  },
 };
 
 export default apiClient;

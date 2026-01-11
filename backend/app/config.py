@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
     
     # Google Cloud / Vertex AI Configuration
-    google_application_credentials: str | None = None
+    # google_application_credentials: str | None = None
     google_project_id: str
     google_location: str = "us-central1"
     

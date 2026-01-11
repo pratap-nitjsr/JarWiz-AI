@@ -40,6 +40,7 @@ uploads/
 
 # Logs
 *.log
+credentials.json
 
 # OS
 .DS_Store

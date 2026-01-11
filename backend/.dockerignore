@@ -16,6 +16,7 @@ build/
 *.egg-info/
 .DS_Store
 .env
+credentials.json
 .env.local
 .env.development
 *.log

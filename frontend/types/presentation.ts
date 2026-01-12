@@ -167,7 +167,7 @@ export interface ChartElement {
 }
 
 // Union type for all slide elements
-export type SlideElement = 
+export type SlideElement =
   | HeadingElement
   | ParagraphElement
   | ImageElement
@@ -186,12 +186,16 @@ export type SlideElement =
   | ChartElement
   | any;
 
-// Main Slide type
+// Main Slide type (Plate.js compatible)
 export interface Slide {
   id: string;
-  content: SlideElement[];
+  type?: 'slide';
+  content?: SlideElement[];  // Legacy field
+  children?: SlideElement[]; // Plate.js field
   rootImage?: RootImage;
-  layoutType?: LayoutType;
+  imageQuery?: string;       // Image search query
+  layoutType?: LayoutType;   // Legacy
+  layout?: LayoutType;       // Plate.js format
   alignment?: 'start' | 'center' | 'end';
   bgColor?: string;
   width?: 'S' | 'M' | 'L';

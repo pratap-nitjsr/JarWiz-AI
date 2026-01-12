@@ -1,159 +1,178 @@
-"""Presentation generation service using LLM"""
+"""Presentation generation service using LLM with Plate.js JSON output"""
 import logging
-from typing import List, Optional, AsyncGenerator
 import json
+import uuid
+from typing import List, Optional, AsyncGenerator
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Outline generation prompt template
-OUTLINE_TEMPLATE = """Given the following meeting transcript and conversation context, generate a structured outline for a presentation with {num_slides} main topics in markdown format.
+# Available themes (from presentation-ai)
+AVAILABLE_THEMES = [
+    "default",
+    "modern",
+    "minimal",
+    "corporate",
+    "creative",
+    "dark",
+    "nature",
+    "tech",
+    "elegant"
+]
 
-Current Date: {current_date}
-Meeting Context:
+# Presentation settings extraction prompt
+SETTINGS_EXTRACTION_PROMPT = """Analyze the following meeting transcript and conversation to extract optimal presentation settings.
+
+Meeting Content:
 {context}
 
-User Request: {prompt}
+Based on the content, determine:
+1. A concise, professional presentation title (5-10 words)
+2. The optimal theme from: {themes}
+3. The recommended number of slides (5-15 based on content depth)
+4. Presentation style: "professional" or "casual"
+5. Key outline topics (each as a single line)
 
-First, generate an appropriate title for the presentation, then create exactly {num_slides} main topics that would make for an engaging and well-structured presentation.
+Respond in this exact JSON format:
+{{
+    "title": "Your Suggested Title Here",
+    "theme": "theme_name",
+    "numSlides": 7,
+    "style": "professional",
+    "outline": [
+        "Topic 1: Brief description",
+        "Topic 2: Brief description",
+        "Topic 3: Brief description"
+    ]
+}}
 
-Format the response starting with the title in XML tags, followed by markdown content with each topic as a heading and 2-3 bullet points.
+Output ONLY the JSON, nothing else."""
 
-Example format:
-<TITLE>Your Generated Presentation Title Here</TITLE>
+# Plate.js slide generation prompt
+PLATE_SLIDES_PROMPT = """You are an expert presentation designer. Create a presentation in Plate.js JSON format.
 
-# First Main Topic
-- Key point about this topic
-- Another important aspect
-- Brief conclusion or impact
-
-# Second Main Topic
-- Main insight for this section
-- Supporting detail or example
-- Practical application or takeaway
-
-Make sure the topics:
-1. Flow logically from one to another
-2. Cover the key aspects from the meeting/conversation
-3. Are clear and concise
-4. Are engaging for the audience
-5. ALWAYS use bullet points (not paragraphs) and format each point as "- point text"
-6. Keep each bullet point brief - just one sentence per point
-7. Include exactly 2-3 bullet points per topic"""
-
-# Slides generation prompt template
-SLIDES_TEMPLATE = """You are an expert presentation designer. Your task is to create an engaging presentation in XML format.
-
-## CORE REQUIREMENTS
-1. FORMAT: Use <SECTION> tags for each slide
-2. CONTENT: DO NOT copy outline verbatim - expand with examples, data, and context
-3. VARIETY: Each slide must use a DIFFERENT layout component
-4. VISUALS: Include detailed image queries (10+ words) on every slide
-
-## PRESENTATION DETAILS
+## PRESENTATION INFO
 - Title: {title}
-- Original Context: {context}
-- User Request: {prompt}
-- Current Date: {current_date}
-- Outline (for reference only): {outline}
+- Theme: {theme}
+- Style: {style}
 - Total Slides: {num_slides}
+- Current Date: {current_date}
 
-## PRESENTATION STRUCTURE
-```xml
-<PRESENTATION>
+## MEETING CONTEXT
+{context}
 
-<!--Every slide must follow this structure (layout determines where the image appears) -->
-<SECTION layout="left" | "right" | "vertical">
-  <!-- Required: include ONE layout component per slide -->
-  <!-- Required: include at least one detailed image query -->
-</SECTION>
+## OUTLINE
+{outline}
 
-</PRESENTATION>
+## OUTPUT FORMAT
+Generate slides as a JSON array. Each slide must follow this Plate.js structure:
+
+```json
+[
+  {{
+    "id": "unique-slide-id",
+    "type": "slide",
+    "layout": "left" | "right" | "vertical",
+    "imageQuery": "detailed image search query for this slide",
+    "children": [
+      {{"type": "h1", "children": [{{"text": "Slide Title"}}]}},
+      {{"type": "p", "children": [{{"text": "Introductory paragraph"}}]}},
+      {{
+        "type": "bullets",
+        "children": [
+          {{"type": "li", "children": [{{"text": "Bullet point 1"}}]}},
+          {{"type": "li", "children": [{{"text": "Bullet point 2"}}]}}
+        ]
+      }}
+    ]
+  }}
+]
 ```
 
-## SECTION LAYOUTS
-Vary the layout attribute in each SECTION tag to control image placement:
-- layout="left" - Root image appears on the left side
-- layout="right" - Root image appears on the right side
-- layout="vertical" - Root image appears at the top
+## AVAILABLE ELEMENT TYPES
+- **h1, h2, h3**: Headings (use children with text nodes)
+- **p**: Paragraphs
+- **bullets**: Bullet list with li children
+- **icons**: Icon list (children have "icon" field: rocket, shield, chart, etc.)
+- **timeline**: Chronological steps
+- **arrows**: Flow/process steps
+- **compare**: Two-column comparison
+- **table**: Data table with rows/cells
+- **img**: Image element with "query" field
 
-## AVAILABLE LAYOUTS
-Choose ONE different layout for each slide:
+## RULES
+1. Generate exactly {num_slides} slides as a JSON array
+2. First slide should be a title slide with h1
+3. Last slide should be a summary/conclusion
+4. Vary layouts (left, right, vertical) across slides
+5. Use different element types per slide for visual variety
+6. Include detailed imageQuery (10+ words) for each slide
+7. Expand outline topics with rich content - don't copy verbatim
+8. Include 3-5 elements per slide
 
-1. BULLETS: For key points
-```xml
-<BULLETS>
-  <DIV><H3>Main Point 1</H3><P>Description</P></DIV>
-  <DIV><H3>Main Point 2</H3><P>Description</P></DIV>
-</BULLETS>
+Output ONLY the valid JSON array of slides, nothing else."""
+
+# Single slide generation for streaming
+SINGLE_SLIDE_PROMPT = """Generate ONE slide for a presentation in Plate.js JSON format.
+
+## CONTEXT
+- Presentation: {title}
+- Theme: {theme}
+- Content Style: {content_style}
+- Slide {slide_number} of {total_slides}
+- Topic: {topic}
+- Previous layouts used: {previous_layouts}
+
+## CONTENT STYLE GUIDELINES
+- "balanced": Mix of text, bullets, and visuals
+- "text-heavy": More detailed paragraphs and comprehensive bullet points
+- "visual": Prioritize icons, images, timelines, and visual elements over text
+
+## MEETING CONTEXT
+{context}
+
+## OUTPUT
+Generate a single slide object:
+
+```json
+{{
+  "id": "{slide_id}",
+  "type": "slide",
+  "layout": "{layout}",
+  "imageQuery": "detailed 15+ word image description for professional stock photo",
+  "children": [
+    {{"type": "h2", "children": [{{"text": "Slide Title"}}]}},
+    // Additional elements based on content
+  ]
+}}
 ```
 
-2. ICONS: For concepts with symbols
-```xml
-<ICONS>
-  <DIV><ICON query="rocket" /><H3>Innovation</H3><P>Description</P></DIV>
-  <DIV><ICON query="shield" /><H3>Security</H3><P>Description</P></DIV>
-</ICONS>
-```
+## AVAILABLE ELEMENTS
+- h1, h2, h3: Headings
+- p: Paragraphs  
+- bullets: With li children - use for key points
+- icons: With icon field (rocket, chart, target, shield, lightbulb, users, settings, star)
+- timeline: For sequential steps or chronological content
+- arrows: For processes/flows/progressions
+- compare: For A vs B content, pros/cons
+- table: IMPORTANT - Use when data has rows/columns, statistics, comparisons with numbers
+  Format: {{"type": "table", "children": [{{"type": "tr", "children": [{{"type": "td", "children": [{{"text": "Cell 1"}}]}}, {{"type": "td", "children": [{{"text": "Cell 2"}}]}}]}}]}}
+- img: For visual content - {{"type": "img", "query": "specific search term"}}
 
-3. TIMELINE: For chronological progression
-```xml
-<TIMELINE>
-  <DIV><H3>Phase 1</H3><P>Description</P></DIV>
-  <DIV><H3>Phase 2</H3><P>Description</P></DIV>
-</TIMELINE>
-```
+## REQUIREMENTS
+1. Use layout="{layout}" (vary from previous slides)
+2. Choose element types different from: {previous_elements}
+3. Include 3-5 content elements
+4. Make imageQuery very specific and descriptive (15+ words)
+5. ALWAYS include table element when presenting data, statistics, or comparisons
+6. For "visual" content style: include at least 1 icon/timeline/arrows element
+7. For "text-heavy" content style: include detailed bullets with 4+ points
 
-4. ARROWS: For cause-effect or flows
-```xml
-<ARROWS>
-  <DIV><H3>Challenge</H3><P>Current problem</P></DIV>
-  <DIV><H3>Solution</H3><P>Our approach</P></DIV>
-  <DIV><H3>Result</H3><P>Outcomes</P></DIV>
-</ARROWS>
-```
-
-5. PYRAMID: For hierarchical importance
-```xml
-<PYRAMID>
-  <DIV><H3>Vision</H3><P>Our goal</P></DIV>
-  <DIV><H3>Strategy</H3><P>Key approaches</P></DIV>
-  <DIV><H3>Tactics</H3><P>Implementation</P></DIV>
-</PYRAMID>
-```
-
-6. BOXES: For simple information tiles
-```xml
-<BOXES>
-  <DIV><H3>Speed</H3><P>Faster delivery.</P></DIV>
-  <DIV><H3>Quality</H3><P>Better results.</P></DIV>
-</BOXES>
-```
-
-7. COMPARE: For side-by-side comparison
-```xml
-<COMPARE>
-  <DIV><H3>Option A</H3><LI>Feature 1</LI><LI>Feature 2</LI></DIV>
-  <DIV><H3>Option B</H3><LI>Feature 3</LI><LI>Feature 4</LI></DIV>
-</COMPARE>
-```
-
-8. IMAGES: Most slides need at least one detailed image query
-```xml
-<IMG query="modern office meeting room with diverse team collaborating on presentation with digital displays" />
-```
-
-## CRITICAL RULES
-1. Generate exactly {num_slides} slides. NOT MORE NOT LESS!
-2. NEVER repeat layouts in consecutive slides
-3. DO NOT copy outline verbatim - expand and enhance
-4. Include at least one detailed image query in most slides
-5. Vary the SECTION layout attribute (left/right/vertical) throughout
-
-Now create a complete XML presentation with {num_slides} slides that expands on the outline."""
+Output ONLY the JSON object for this one slide, nothing else."""
 
 
 class PresentationService:
-    """Service for generating presentations from meeting context"""
+    """Service for generating presentations from meeting context with Plate.js output"""
     
     def __init__(self, llm_service):
         """
@@ -163,40 +182,317 @@ class PresentationService:
             llm_service: LLM service for text generation
         """
         self.llm_service = llm_service
-        logger.info("PresentationService initialized")
+        logger.info("PresentationService initialized (Plate.js mode)")
     
-    async def generate_topic_from_context(self, context: str) -> str:
+    async def extract_presentation_settings(self, context: str) -> dict:
         """
-        Generate a presentation topic automatically from meeting context
+        AI-extract optimal presentation settings from meeting context
         
         Args:
             context: Meeting transcript and chat history
             
         Returns:
-            Suggested presentation topic
+            Dictionary with title, theme, numSlides, style, outline
         """
         if not context or len(context.strip()) < 50:
-            return "Meeting Summary"
+            return {
+                "title": "Meeting Summary",
+                "theme": "default",
+                "numSlides": 5,
+                "style": "professional",
+                "outline": ["Introduction", "Key Points", "Discussion", "Action Items", "Summary"]
+            }
         
-        prompt = f"""Based on the following meeting transcript and discussion, suggest a concise and descriptive presentation title (5-10 words max).
-
-Meeting Content:
-{context[:3000]}
-
-Respond with ONLY the title, nothing else. Make it professional and specific to the content discussed."""
-
+        prompt = SETTINGS_EXTRACTION_PROMPT.format(
+            context=context[:5000],  # Limit context length
+            themes=", ".join(AVAILABLE_THEMES)
+        )
+        
         try:
             response = await self.llm_service.generate_simple_answer(
                 query=prompt,
                 context=""
             )
-            # Clean up the response
-            topic = response.strip().strip('"\'')
-            return topic if topic else "Meeting Summary"
+            
+            # Parse JSON response
+            response_text = response.strip()
+            # Handle potential markdown code blocks
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[1].split("```")[0]
+            elif "```" in response_text:
+                response_text = response_text.split("```")[1].split("```")[0]
+            
+            settings = json.loads(response_text.strip())
+            
+            # Validate and set defaults
+            if settings.get("theme") not in AVAILABLE_THEMES:
+                settings["theme"] = "default"
+            if not 3 <= settings.get("numSlides", 5) <= 15:
+                settings["numSlides"] = min(15, max(3, settings.get("numSlides", 5)))
+            if settings.get("style") not in ["professional", "casual"]:
+                settings["style"] = "professional"
+            if not settings.get("outline"):
+                settings["outline"] = ["Introduction", "Main Content", "Summary"]
+                
+            logger.info(f"Extracted settings: {settings['title']}, theme={settings['theme']}, slides={settings['numSlides']}")
+            return settings
+            
         except Exception as e:
-            logger.error(f"Error generating topic: {e}")
-            return "Meeting Summary"
+            logger.error(f"Error extracting settings: {e}")
+            return {
+                "title": "Meeting Summary",
+                "theme": "default",
+                "numSlides": 5,
+                "style": "professional",
+                "outline": ["Introduction", "Key Points", "Discussion", "Action Items", "Summary"]
+            }
     
+    async def generate_topic_from_context(self, context: str) -> str:
+        """
+        Generate a presentation topic automatically from meeting context
+        (Kept for backwards compatibility)
+        """
+        settings = await self.extract_presentation_settings(context)
+        return settings.get("title", "Meeting Summary")
+    
+    async def generate_full_presentation(
+        self,
+        context: str,
+        settings: Optional[dict] = None
+    ) -> dict:
+        """
+        Generate a complete presentation with AI-determined settings
+        
+        Args:
+            context: Meeting transcript and chat history
+            settings: Optional pre-determined settings (if user modified them)
+            
+        Returns:
+            Complete presentation with settings and slides
+        """
+        # Extract settings if not provided
+        if not settings:
+            settings = await self.extract_presentation_settings(context)
+        
+        current_date = datetime.now().strftime("%A, %B %d, %Y")
+        
+        prompt = PLATE_SLIDES_PROMPT.format(
+            title=settings["title"],
+            theme=settings["theme"],
+            style=settings["style"],
+            num_slides=settings["numSlides"],
+            current_date=current_date,
+            context=context[:4000] if context else "General presentation",
+            outline="\n".join(f"- {item}" for item in settings["outline"])
+        )
+        
+        try:
+            response = await self.llm_service.generate_simple_answer(
+                query=prompt,
+                context=""
+            )
+            
+            # Parse JSON response
+            response_text = response.strip()
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[1].split("```")[0]
+            elif "```" in response_text:
+                response_text = response_text.split("```")[1].split("```")[0]
+            
+            slides = json.loads(response_text.strip())
+            
+            return {
+                "settings": settings,
+                "slides": slides
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating presentation: {e}")
+            raise
+    
+    async def generate_slides_stream(
+        self,
+        title: str,
+        prompt: str,
+        outline: List[str],
+        context: Optional[str] = None,
+        theme: str = "default",
+        style: str = "professional",
+        content_style: str = "balanced"
+    ) -> AsyncGenerator[str, None]:
+        """
+        Generate presentation slides as streaming JSON
+        
+        Args:
+            title: Presentation title
+            prompt: User's original request  
+            outline: List of outline topics
+            context: Meeting context
+            theme: Presentation theme
+            style: Presentation style
+            content_style: Content style (balanced, text-heavy, visual)
+            
+        Yields:
+            JSON chunks for parsing
+        """
+        current_date = datetime.now().strftime("%A, %B %d, %Y")
+        num_slides = len(outline) if outline else 5
+        
+        logger.info(f"Starting Plate.js slide generation: {title}, slides={num_slides}, content_style={content_style}")
+        
+        layouts = ["left", "right", "vertical"]
+        element_types = ["bullets", "icons", "timeline", "arrows", "compare", "table"]
+        
+        previous_layouts = []
+        previous_elements = []
+        
+        # Start JSON array
+        yield '{"slides": ['
+        
+        for i, topic in enumerate(outline):
+            slide_id = str(uuid.uuid4())[:8]
+            
+            # Vary layout
+            layout = layouts[i % len(layouts)]
+            while layout in previous_layouts[-2:] and len(previous_layouts) >= 2:
+                layout = layouts[(layouts.index(layout) + 1) % len(layouts)]
+            
+            slide_prompt = SINGLE_SLIDE_PROMPT.format(
+                title=title,
+                theme=theme,
+                content_style=content_style,
+                slide_number=i + 1,
+                total_slides=num_slides,
+                topic=topic,
+                context=context[:2000] if context else "",
+                slide_id=slide_id,
+                layout=layout,
+                previous_layouts=", ".join(previous_layouts[-3:]) or "none",
+                previous_elements=", ".join(previous_elements[-3:]) or "none"
+            )
+            
+            logger.info(f"Generating slide {i + 1}/{num_slides}")
+            
+            try:
+                # Collect full slide content from LLM
+                slide_content = ""
+                async for chunk in self.llm_service.generate_long_content_stream(slide_prompt):
+                    slide_content += chunk
+                
+                # Clean the LLM output - remove markdown code blocks
+                clean_content = slide_content.strip()
+                if "```json" in clean_content:
+                    clean_content = clean_content.split("```json")[1].split("```")[0]
+                elif "```" in clean_content:
+                    parts = clean_content.split("```")
+                    if len(parts) >= 2:
+                        clean_content = parts[1]
+                clean_content = clean_content.strip()
+                
+                # Parse and validate the slide JSON
+                try:
+                    slide_obj = json.loads(clean_content)
+                    # Ensure it has required fields
+                    if "id" not in slide_obj:
+                        slide_obj["id"] = slide_id
+                    if "type" not in slide_obj:
+                        slide_obj["type"] = "slide"
+                    if "layout" not in slide_obj:
+                        slide_obj["layout"] = layout
+                    
+                    # Emit clean JSON
+                    yield json.dumps(slide_obj)
+                    
+                except json.JSONDecodeError as je:
+                    logger.warning(f"Failed to parse slide {i + 1} JSON: {je}")
+                    # Emit fallback slide
+                    fallback = {
+                        "id": slide_id,
+                        "type": "slide",
+                        "layout": layout,
+                        "imageQuery": f"professional presentation slide about {topic}",
+                        "children": [
+                            {"type": "h2", "children": [{"text": topic.split("\n")[0]}]},
+                            {"type": "p", "children": [{"text": "Content generated from meeting"}]}
+                        ]
+                    }
+                    yield json.dumps(fallback)
+                
+                # Track used layout
+                previous_layouts.append(layout)
+                
+                # Try to detect element type used
+                for etype in element_types:
+                    if f'"{etype}"' in slide_content.lower():
+                        previous_elements.append(etype)
+                        break
+                
+                # Add comma between slides (except last)
+                if i < len(outline) - 1:
+                    yield ","
+                    
+            except Exception as e:
+                logger.error(f"Error generating slide {i + 1}: {e}")
+                # Emit a fallback slide
+                fallback = json.dumps({
+                    "id": slide_id,
+                    "type": "slide",
+                    "layout": layout,
+                    "imageQuery": f"professional presentation slide about {topic}",
+                    "children": [
+                        {"type": "h2", "children": [{"text": topic.split("\n")[0]}]},
+                        {"type": "p", "children": [{"text": "Content to be added"}]}
+                    ]
+                })
+                yield fallback
+                if i < len(outline) - 1:
+                    yield ","
+        
+        # Close JSON array
+        yield ']}'
+        
+        logger.info(f"Slide generation completed: {num_slides} slides")
+    
+    async def generate_presentation_stream(
+        self,
+        context: str,
+        settings: Optional[dict] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        Stream the complete presentation generation process
+        
+        Args:
+            context: Meeting transcript and chat history
+            settings: Optional pre-determined settings
+            
+        Yields:
+            JSON chunks with status updates and slide data
+        """
+        # First, emit settings extraction status
+        yield json.dumps({"type": "status", "message": "Analyzing meeting content..."}) + "\n"
+        
+        # Extract settings
+        if not settings:
+            settings = await self.extract_presentation_settings(context)
+        
+        # Emit settings
+        yield json.dumps({"type": "settings", "data": settings}) + "\n"
+        yield json.dumps({"type": "status", "message": "Generating slides..."}) + "\n"
+        
+        # Generate slides
+        async for chunk in self.generate_slides_stream(
+            title=settings["title"],
+            prompt=settings["title"],
+            outline=settings["outline"],
+            context=context,
+            theme=settings["theme"],
+            style=settings["style"]
+        ):
+            yield json.dumps({"type": "slide_chunk", "content": chunk}) + "\n"
+        
+        yield json.dumps({"type": "done"}) + "\n"
+    
+    # Legacy methods for backwards compatibility
     async def generate_outline_stream(
         self,
         topic: str,
@@ -204,43 +500,30 @@ Respond with ONLY the title, nothing else. Make it professional and specific to 
         context: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
-        Generate a presentation outline from meeting context (streaming)
-        
-        Args:
-            topic: Presentation topic
-            num_slides: Number of slides to generate
-            context: Meeting transcript and chat history
-            
-        Yields:
-            Text chunks as they are generated
+        Generate outline (legacy method - kept for compatibility)
+        Now internally uses settings extraction
         """
-        from datetime import datetime
+        settings = await self.extract_presentation_settings(context or "")
         
-        current_date = datetime.now().strftime("%A, %B %d, %Y")
+        # Override with provided values
+        if topic:
+            settings["title"] = topic
+        if num_slides:
+            settings["numSlides"] = num_slides
+            # Regenerate outline to match slide count
+            outline_items = settings.get("outline", [])
+            while len(outline_items) < num_slides:
+                outline_items.append(f"Topic {len(outline_items) + 1}")
+            settings["outline"] = outline_items[:num_slides]
         
-        formatted_prompt = OUTLINE_TEMPLATE.format(
-            num_slides=num_slides,
-            current_date=current_date,
-            context=context or "No specific meeting context provided.",
-            prompt=topic
-        )
+        # Emit the title
+        yield f"<TITLE>{settings['title']}</TITLE>\n\n"
         
-        logger.info(f"Starting outline generation for topic: {topic}")
-        
-        try:
-            # Stream the outline using LLM's long content stream method
-            chunk_count = 0
-            async for chunk in self.llm_service.generate_long_content_stream(formatted_prompt):
-                chunk_count += 1
-                if chunk_count == 1:
-                    logger.info("First outline chunk received")
-                yield chunk
-            
-            logger.info(f"Outline generation completed with {chunk_count} chunks")
-                    
-        except Exception as e:
-            logger.error(f"Error generating outline stream: {e}", exc_info=True)
-            raise
+        # Emit outline in markdown format
+        for item in settings["outline"]:
+            yield f"# {item}\n"
+            yield "- Key point about this topic\n"
+            yield "- Supporting detail\n\n"
     
     async def generate_outline(
         self,
@@ -248,245 +531,16 @@ Respond with ONLY the title, nothing else. Make it professional and specific to 
         num_slides: int = 5,
         context: Optional[str] = None
     ) -> dict:
-        """
-        Generate a presentation outline from meeting context (non-streaming)
+        """Generate outline (legacy non-streaming method)"""
+        settings = await self.extract_presentation_settings(context or "")
         
-        Args:
-            prompt: User's presentation request
-            num_slides: Number of slides to generate
-            context: Meeting transcript and chat history
-            
-        Returns:
-            Dictionary with title and outline topics
-        """
-        from datetime import datetime
-        
-        current_date = datetime.now().strftime("%A, %B %d, %Y")
-        
-        formatted_prompt = OUTLINE_TEMPLATE.format(
-            num_slides=num_slides,
-            current_date=current_date,
-            context=context or "No specific meeting context provided.",
-            prompt=prompt
-        )
-        
-        try:
-            # Generate outline using LLM's ainvoke method
-            response = await self.llm_service.llm.ainvoke(formatted_prompt)
-            
-            # Parse the response to extract title and outline
-            result = self._parse_outline_response(response.content)
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error generating outline: {e}")
-            raise
-    
-    def _parse_outline_response(self, response: str) -> dict:
-        """Parse the outline response to extract title and topics"""
-        title = "Meeting Summary Presentation"
-        outline = []
-        
-        # Extract title from <TITLE> tags
-        if "<TITLE>" in response and "</TITLE>" in response:
-            start = response.index("<TITLE>") + len("<TITLE>")
-            end = response.index("</TITLE>")
-            title = response[start:end].strip()
-        
-        # Extract topics (lines starting with #)
-        lines = response.split("\n")
-        current_topic = None
-        current_bullets = []
-        
-        for line in lines:
-            line = line.strip()
-            if line.startswith("# "):
-                # Save previous topic if exists
-                if current_topic:
-                    topic_with_bullets = current_topic + "\n" + "\n".join(current_bullets)
-                    outline.append(topic_with_bullets)
-                
-                current_topic = line[2:]  # Remove "# "
-                current_bullets = []
-            elif line.startswith("- ") and current_topic:
-                current_bullets.append(line)
-        
-        # Don't forget the last topic
-        if current_topic:
-            topic_with_bullets = current_topic + "\n" + "\n".join(current_bullets)
-            outline.append(topic_with_bullets)
+        if prompt:
+            settings["title"] = prompt
         
         return {
-            "title": title,
-            "outline": outline
+            "title": settings["title"],
+            "outline": settings["outline"][:num_slides]
         }
-    
-    async def generate_slides_stream(
-        self,
-        title: str,
-        prompt: str,
-        outline: List[str],
-        context: Optional[str] = None
-    ) -> AsyncGenerator[str, None]:
-        """
-        Generate presentation slides one at a time as a stream
-        
-        Args:
-            title: Presentation title
-            prompt: User's original request
-            outline: List of outline topics
-            context: Meeting context
-            
-        Yields:
-            XML chunks for parsing
-        """
-        from datetime import datetime
-        
-        current_date = datetime.now().strftime("%A, %B %d, %Y")
-        num_slides = len(outline) if outline else 5
-        
-        logger.info(f"Starting slides generation for title: {title}, num_slides: {num_slides}")
-        
-        # Track used layouts to ensure variety
-        used_layouts = []
-        all_layouts = ["BULLETS", "ICONS", "TIMELINE", "ARROWS", "PYRAMID", "BOXES", "COMPARE"]
-        section_layouts = ["left", "right", "vertical"]
-        
-        # Start the presentation XML
-        yield "<PRESENTATION>\n"
-        
-        # Generate each slide one at a time
-        for i, topic in enumerate(outline):
-            # Avoid recently used layouts
-            available_layouts = [l for l in all_layouts if l not in used_layouts[-2:]] if len(used_layouts) >= 2 else all_layouts
-            section_layout = section_layouts[i % len(section_layouts)]
-            
-            slide_prompt = self._create_single_slide_prompt(
-                title=title,
-                topic=topic,
-                slide_number=i + 1,
-                total_slides=num_slides,
-                context=context,
-                current_date=current_date,
-                available_layouts=available_layouts,
-                section_layout=section_layout,
-                previous_slides_summary=f"Slides so far used layouts: {', '.join(used_layouts)}" if used_layouts else "This is the first slide."
-            )
-            
-            logger.info(f"Generating slide {i + 1}/{num_slides}: {topic[:50]}...")
-            
-            try:
-                # Generate single slide
-                slide_content = ""
-                async for chunk in self.llm_service.generate_long_content_stream(slide_prompt):
-                    slide_content += chunk
-                    yield chunk
-                
-                # Track the layout used
-                for layout in all_layouts:
-                    if f"<{layout}>" in slide_content.upper():
-                        used_layouts.append(layout)
-                        break
-                
-                # Add newline between slides
-                yield "\n"
-                
-                logger.info(f"Slide {i + 1} generated successfully")
-                
-            except Exception as e:
-                logger.error(f"Error generating slide {i + 1}: {e}")
-                # Continue with next slide on error
-                continue
-        
-        # Close the presentation
-        yield "</PRESENTATION>"
-        
-        logger.info(f"Slides generation completed, generated {num_slides} slides")
-    
-    def _create_single_slide_prompt(
-        self,
-        title: str,
-        topic: str,
-        slide_number: int,
-        total_slides: int,
-        context: Optional[str],
-        current_date: str,
-        available_layouts: List[str],
-        section_layout: str,
-        previous_slides_summary: str
-    ) -> str:
-        """Create prompt for generating a single slide"""
-        return f"""You are an expert presentation designer. Generate ONE slide in XML format.
-
-## PRESENTATION INFO
-- Title: {title}
-- Current Slide: {slide_number} of {total_slides}
-- Context: {context[:500] if context else "General presentation"}
-- Date: {current_date}
-
-## THIS SLIDE'S TOPIC
-{topic}
-
-## REQUIREMENTS
-1. Generate ONLY ONE <SECTION> tag for this slide
-2. Use layout="{section_layout}" for image placement
-3. Choose ONE layout component from: {', '.join(available_layouts)}
-4. Include a detailed image query (10+ words) relevant to this topic
-5. {previous_slides_summary}
-
-## AVAILABLE LAYOUTS
-{self._get_layout_examples(available_layouts)}
-
-## OUTPUT FORMAT
-Generate ONLY the XML for this one slide:
-```xml
-<SECTION layout="{section_layout}">
-  <!-- Your content here using ONE of the available layouts -->
-  <IMG query="detailed image description for this slide topic" />
-</SECTION>
-```
-
-Generate the slide now. Output ONLY the XML, nothing else."""
-
-    def _get_layout_examples(self, layouts: List[str]) -> str:
-        """Get example XML for specified layouts"""
-        examples = {
-            "BULLETS": '''BULLETS: For key points
-<BULLETS>
-  <DIV><H3>Point 1</H3><P>Description</P></DIV>
-  <DIV><H3>Point 2</H3><P>Description</P></DIV>
-</BULLETS>''',
-            "ICONS": '''ICONS: For concepts with symbols
-<ICONS>
-  <DIV><ICON query="rocket" /><H3>Concept</H3><P>Description</P></DIV>
-</ICONS>''',
-            "TIMELINE": '''TIMELINE: For progression
-<TIMELINE>
-  <DIV><H3>Phase 1</H3><P>Description</P></DIV>
-  <DIV><H3>Phase 2</H3><P>Description</P></DIV>
-</TIMELINE>''',
-            "ARROWS": '''ARROWS: For cause-effect
-<ARROWS>
-  <DIV><H3>Challenge</H3><P>Problem</P></DIV>
-  <DIV><H3>Solution</H3><P>Approach</P></DIV>
-</ARROWS>''',
-            "PYRAMID": '''PYRAMID: For hierarchy
-<PYRAMID>
-  <DIV><H3>Vision</H3><P>Goal</P></DIV>
-  <DIV><H3>Strategy</H3><P>Approach</P></DIV>
-</PYRAMID>''',
-            "BOXES": '''BOXES: For information tiles
-<BOXES>
-  <DIV><H3>Item 1</H3><P>Detail</P></DIV>
-  <DIV><H3>Item 2</H3><P>Detail</P></DIV>
-</BOXES>''',
-            "COMPARE": '''COMPARE: For side-by-side
-<COMPARE>
-  <DIV><H3>Option A</H3><LI>Feature 1</LI></DIV>
-  <DIV><H3>Option B</H3><LI>Feature 2</LI></DIV>
-</COMPARE>'''
-        }
-        return "\n\n".join([examples[l] for l in layouts if l in examples])
     
     async def generate_slides(
         self,
@@ -495,20 +549,10 @@ Generate the slide now. Output ONLY the XML, nothing else."""
         outline: List[str],
         context: Optional[str] = None
     ) -> str:
-        """
-        Generate complete presentation slides (non-streaming)
-        
-        Args:
-            title: Presentation title
-            prompt: User's original request
-            outline: List of outline topics
-            context: Meeting context
-            
-        Returns:
-            Complete XML presentation string
-        """
+        """Generate slides (legacy non-streaming method)"""
         full_response = ""
-        async for chunk in self.generate_slides_stream(title, prompt, outline, context):
+        async for chunk in self.generate_slides_stream(
+            title, prompt, outline, context
+        ):
             full_response += chunk
-        
         return full_response

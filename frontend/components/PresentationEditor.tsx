@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -14,16 +13,33 @@ import {
   ChevronRight,
   FileText,
   Sparkles,
-  Edit3,
   Check,
   RefreshCw,
   Presentation,
-  Wand2,
+  Palette,
+  Plus,
+  Trash2,
+  Settings,
+  Layers,
+  AlignLeft,
+  Image as ImageIcon,
+  ArrowRight,
+  Upload,
+  Eye,
+  Edit3,
+  Grid,
+  LayoutGrid,
 } from 'lucide-react';
 import api from '@/lib/api';
-import { SlideParser } from '@/lib/slideParser';
 import { exportToPPTX } from '@/lib/exportToPPT';
-import type { Slide, SlideElement } from '@/types/presentation';
+import { usePresentationState } from '@/states/presentation-state';
+import { themes, setThemeVariables, type ThemeName, type ThemeProperties } from '@/lib/presentation/themes';
+import type { PlateSlide } from '@/components/presentation/utils/parser';
+import { DndProvider } from 'react-dnd';
+import { HTML5Backend } from 'react-dnd-html5-backend';
+
+// Dynamic import for heavy Plate editor
+const PlateEditor = React.lazy(() => import('@/components/presentation/editor/presentation-editor'));
 
 interface PresentationEditorProps {
   isOpen: boolean;
@@ -32,633 +48,762 @@ interface PresentationEditorProps {
   aiResponses: { question: string; answer: string }[];
 }
 
-type GenerationStep = 'input' | 'generating-outline' | 'editing-outline' | 'generating-slides' | 'viewing';
+interface PresentationSettings {
+  title: string;
+  theme: ThemeName;
+  numSlides: number;
+  style: string;
+  contentStyle: string;
+  outline: string[];
+}
+
+// Theme list for UI
+const THEME_LIST: { id: ThemeName; name: string; desc: string; primary: string; bg: string }[] = [
+  { id: 'daktilo', name: 'Daktilo', desc: 'Modern & Clean', primary: themes.daktilo.colors.light.primary, bg: themes.daktilo.colors.light.background },
+  { id: 'cornflower', name: 'Cornflower', desc: 'Professional', primary: themes.cornflower.colors.light.primary, bg: themes.cornflower.colors.light.background },
+  { id: 'orbit', name: 'Orbit', desc: 'Futuristic', primary: themes.orbit.colors.light.primary, bg: themes.orbit.colors.light.background },
+  { id: 'piano', name: 'Piano', desc: 'Classic', primary: themes.piano.colors.light.primary, bg: themes.piano.colors.light.background },
+  { id: 'mystique', name: 'Mystique', desc: 'Sophisticated', primary: themes.mystique.colors.light.primary, bg: themes.mystique.colors.light.background },
+  { id: 'gammaDark', name: 'Gamma', desc: 'High Contrast', primary: themes.gammaDark.colors.dark.primary, bg: themes.gammaDark.colors.dark.background },
+  { id: 'crimson', name: 'Crimson', desc: 'Bold', primary: themes.crimson.colors.light.primary, bg: themes.crimson.colors.light.background },
+  { id: 'sunset', name: 'Sunset', desc: 'Warm', primary: themes.sunset.colors.light.primary, bg: themes.sunset.colors.light.background },
+  { id: 'forest', name: 'Forest', desc: 'Natural', primary: themes.forest.colors.light.primary, bg: themes.forest.colors.light.background },
+];
+
+const CONTENT_STYLES = [
+  { id: 'balanced', name: 'Balanced', desc: 'Mix of text and visuals', icon: Layers },
+  { id: 'text-heavy', name: 'Text Heavy', desc: 'More detailed content', icon: AlignLeft },
+  { id: 'visual', name: 'Visual', desc: 'More images and graphics', icon: ImageIcon },
+];
+
+type GenerationStep =
+  | 'ready'
+  | 'configure-basics'
+  | 'generating-outline'
+  | 'review-outline'
+  | 'generating-slides'
+  | 'editing';
 
 export function PresentationEditor({ isOpen, onClose, transcript, aiResponses }: PresentationEditorProps) {
-  const [step, setStep] = useState<GenerationStep>('input');
-  const [topic, setTopic] = useState('');
-  const [numSlides, setNumSlides] = useState(5);
-  const [outline, setOutline] = useState('');
-  const [slides, setSlides] = useState<Slide[]>([]);
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isLoadingTopic, setIsLoadingTopic] = useState(false);
+  // Local state
+  const [step, setStep] = useState<GenerationStep>('ready');
+  const [localSettings, setLocalSettings] = useState<PresentationSettings>({
+    title: '',
+    theme: 'mystique',
+    numSlides: 7,
+    style: 'professional',
+    contentStyle: 'balanced',
+    outline: [],
+  });
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [rawSlideData, setRawSlideData] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const parserRef = useRef<SlideParser | null>(null);
+  const [isGridView, setIsGridView] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Build context from transcript and AI responses
-  const buildContext = () => {
-    let context = '';
-    
-    if (transcript) {
-      context += `Meeting Transcript:\n${transcript}\n\n`;
+  // Zustand state from presentation-ai
+  const {
+    slides,
+    setSlides,
+    currentSlideIndex,
+    setCurrentSlideIndex,
+    theme: globalTheme,
+    setTheme: setGlobalTheme,
+    isGeneratingPresentation,
+    setIsGeneratingPresentation,
+    setPresentationInput,
+    setOutline: setGlobalOutline,
+    setNumSlides: setGlobalNumSlides,
+    resetForNewGeneration,
+  } = usePresentationState();
+
+  // Apply theme CSS variables when theme changes
+  useEffect(() => {
+    const themeData = themes[localSettings.theme];
+    if (themeData) {
+      setThemeVariables(themeData, localSettings.theme === 'gammaDark');
+      setGlobalTheme(localSettings.theme);
     }
-    
+  }, [localSettings.theme, setGlobalTheme]);
+
+  const buildContext = useCallback(() => {
+    let context = '';
+    if (transcript) context += `Meeting Transcript:\n${transcript}\n\n`;
     if (aiResponses.length > 0) {
-      context += `Key Q&A from Meeting:\n`;
+      context += `Key Q&A:\n`;
       aiResponses.forEach((item) => {
         context += `Q: ${item.question}\nA: ${item.answer}\n\n`;
       });
     }
-    
     return context;
-  };
+  }, [transcript, aiResponses]);
 
-  // Auto-suggest topic from context
-  const suggestTopic = async () => {
+  // Generate outline from context
+  const generateOutline = async () => {
     const context = buildContext();
     if (!context || context.length < 50) {
+      setError('Not enough content. Please add transcript or Q&A data.');
       return;
     }
 
-    setIsLoadingTopic(true);
-    try {
-      const result = await api.suggestPresentationTopic(context);
-      if (result.topic) {
-        setTopic(result.topic);
-      }
-    } catch (err) {
-      console.error('Error suggesting topic:', err);
-    } finally {
-      setIsLoadingTopic(false);
-    }
-  };
-
-  // Generate outline from topic
-  const generateOutline = async () => {
-    if (!topic.trim()) {
-      setError('Please enter a topic for the presentation');
-      return;
-    }
-
-    setIsGenerating(true);
-    setError(null);
-    setOutline('');
     setStep('generating-outline');
-
-    const context = buildContext();
+    setError(null);
+    setStatusMessage('Generating outline...');
 
     try {
-      await api.generatePresentationOutline(
-        topic,
-        numSlides,
-        context,
-        (chunk) => {
-          setOutline((prev) => prev + chunk);
-        },
-        () => {
-          setIsGenerating(false);
-          setStep('editing-outline');
-        },
-        (errorMsg) => {
-          setError(errorMsg);
-          setIsGenerating(false);
-          setStep('input');
-        }
-      );
+      const result = await api.extractPresentationSettings(context);
+      setLocalSettings(prev => ({
+        ...prev,
+        title: prev.title || result.settings.title,
+        outline: result.settings.outline.slice(0, prev.numSlides),
+      }));
+      setStep('review-outline');
+      setStatusMessage('');
     } catch (err: any) {
       setError(err.message || 'Failed to generate outline');
-      setIsGenerating(false);
-      setStep('input');
+      setStep('configure-basics');
     }
   };
 
-  // Generate slides from outline
+  // Generate slides using backend
   const generateSlides = async () => {
-    if (!outline.trim()) {
-      setError('No outline to generate slides from');
-      return;
-    }
-
-    setIsGenerating(true);
-    setError(null);
-    setSlides([]);
     setStep('generating-slides');
-    
-    // Create a fresh parser
-    parserRef.current = new SlideParser();
+    setIsGeneratingPresentation(true);
+    setError(null);
+    setStatusMessage('Generating slides...');
+    setRawSlideData('');
+    setSlides([]);
+    setGlobalOutline(localSettings.outline);
+    setGlobalNumSlides(localSettings.outline.length);
+    setPresentationInput(localSettings.title);
+
     const context = buildContext();
 
     try {
-      await api.generatePresentationSlides(
-        topic,
-        outline,
+      await api.autoGeneratePresentation(
         context,
-        (chunk) => {
-          if (parserRef.current) {
-            const newSlides = parserRef.current.parseChunk(chunk);
-            if (newSlides.length > 0) {
-              setSlides(parserRef.current.getAllSlides());
-            }
-          }
+        {
+          title: localSettings.title,
+          theme: localSettings.theme,
+          numSlides: localSettings.outline.length,
+          style: localSettings.style,
+          outline: localSettings.outline,
         },
+        (message) => setStatusMessage(message),
+        () => { },
+        (chunk) => setRawSlideData((prev) => prev + chunk),
         () => {
-          // Finalize parsing
-          if (parserRef.current) {
-            parserRef.current.finalize();
-            setSlides(parserRef.current.getAllSlides());
-          }
-          setIsGenerating(false);
-          setStep('viewing');
-          setCurrentSlideIndex(0);
+          setStep('editing');
+          setIsGeneratingPresentation(false);
+          setStatusMessage('');
         },
         (errorMsg) => {
           setError(errorMsg);
-          setIsGenerating(false);
-          setStep('editing-outline');
+          setStep('review-outline');
+          setIsGeneratingPresentation(false);
         }
       );
     } catch (err: any) {
       setError(err.message || 'Failed to generate slides');
-      setIsGenerating(false);
-      setStep('editing-outline');
+      setStep('review-outline');
+      setIsGeneratingPresentation(false);
     }
   };
 
-  // Save presentation to Cloudinary
+  // Parse raw JSON slides into PlateSlide format
+  useEffect(() => {
+    if (!rawSlideData) return;
+    try {
+      const parsed = JSON.parse(rawSlideData);
+      let slideArray: any[] = [];
+
+      if (parsed.slides && Array.isArray(parsed.slides)) {
+        slideArray = parsed.slides;
+      } else if (Array.isArray(parsed)) {
+        slideArray = parsed;
+      }
+
+      // Convert to PlateSlide format
+      const plateSlides: PlateSlide[] = slideArray.map((slide: any, idx: number) => ({
+        id: slide.id || `slide-${idx}`,
+        content: slide.children || [],
+        layoutType: slide.layout || 'left',
+        rootImage: slide.imageQuery ? { query: slide.imageQuery } : undefined,
+        alignment: 'center',
+      }));
+
+      if (plateSlides.length > 0) {
+        setSlides(plateSlides);
+      }
+    } catch {
+      // Try partial parsing for streaming
+      try {
+        let content = rawSlideData.replace(/^\{"slides":\s*\[/, '').replace(/\]\}$/, '');
+        const slideStrings: string[] = [];
+        let depth = 0, currentSlide = '';
+        for (let i = 0; i < content.length; i++) {
+          const char = content[i];
+          if (char === '{') depth++;
+          if (char === '}') depth--;
+          if (char === ',' && depth === 0) {
+            if (currentSlide.trim()) slideStrings.push(currentSlide.trim());
+            currentSlide = '';
+          } else {
+            currentSlide += char;
+          }
+        }
+        if (currentSlide.trim()) slideStrings.push(currentSlide.trim());
+
+        const plateSlides: PlateSlide[] = [];
+        for (let idx = 0; idx < slideStrings.length; idx++) {
+          try {
+            const slide = JSON.parse(slideStrings[idx]);
+            plateSlides.push({
+              id: slide.id || `slide-${idx}`,
+              content: slide.children || [],
+              layoutType: slide.layout || 'left',
+              rootImage: slide.imageQuery ? { query: slide.imageQuery } : undefined,
+              alignment: 'center',
+            });
+          } catch { }
+        }
+        if (plateSlides.length > 0) setSlides(plateSlides);
+      } catch { }
+    }
+  }, [rawSlideData, setSlides]);
+
+  // Outline manipulation
+  const addOutlineItem = () => setLocalSettings(prev => ({ ...prev, outline: [...prev.outline, 'New Topic'] }));
+  const removeOutlineItem = (index: number) => setLocalSettings(prev => ({ ...prev, outline: prev.outline.filter((_, i) => i !== index) }));
+  const updateOutlineItem = (index: number, value: string) => {
+    const newOutline = [...localSettings.outline];
+    newOutline[index] = value;
+    setLocalSettings(prev => ({ ...prev, outline: newOutline }));
+  };
+
+  // Add slide
+  const addSlide = () => {
+    const newSlide: PlateSlide = {
+      id: `slide-${Date.now()}`,
+      content: [
+        { type: 'h2', children: [{ text: 'New Slide' }] },
+        { type: 'p', children: [{ text: 'Add your content here' }] },
+      ],
+      layoutType: 'left',
+      alignment: 'center',
+    };
+    setSlides([...slides, newSlide]);
+    setCurrentSlideIndex(slides.length);
+  };
+
+  // Remove slide
+  const removeSlide = (index: number) => {
+    if (slides.length <= 1) return;
+    const newSlides = slides.filter((_, i) => i !== index);
+    setSlides(newSlides);
+    if (currentSlideIndex >= newSlides.length) {
+      setCurrentSlideIndex(Math.max(0, newSlides.length - 1));
+    }
+  };
+
+  // Save presentation
   const savePresentation = async () => {
     if (slides.length === 0) return;
-
     setIsSaving(true);
     setError(null);
-
     try {
-      await api.savePresentation(topic, slides, outline);
+      await api.savePresentation(
+        localSettings.title,
+        slides.map(s => ({ ...s, children: s.content })),
+        localSettings.outline.join('\n'),
+        localSettings.theme,
+        localSettings.style
+      );
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: any) {
-      setError(err.message || 'Failed to save presentation');
+      setError(err.message || 'Failed to save');
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Download as PPTX
-  const [isDownloading, setIsDownloading] = useState(false);
-  
+  // Download PPTX
   const downloadPresentation = async () => {
     if (slides.length === 0) return;
-    
     try {
       setIsDownloading(true);
-      await exportToPPTX(slides, { title: topic || 'Presentation' });
-    } catch (err: any) {
-      console.error('Download failed:', err);
-      setError('Failed to generate PPTX file');
+      const exportSlides = slides.map(s => ({
+        ...s,
+        children: s.content,
+      }));
+      await exportToPPTX(exportSlides as any, { title: localSettings.title || 'Presentation' });
+    } catch {
+      setError('Failed to download');
     } finally {
       setIsDownloading(false);
     }
   };
 
-  // Reset state when opening and auto-suggest topic
+  // Handle image upload from device
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      // Add image to current slide
+      if (slides[currentSlideIndex]) {
+        const newSlides = [...slides];
+        const currentContent = newSlides[currentSlideIndex].content || [];
+        newSlides[currentSlideIndex] = {
+          ...newSlides[currentSlideIndex],
+          content: [
+            ...currentContent,
+            {
+              type: 'img',
+              url: dataUrl,
+              children: [{ text: '' }],
+            },
+          ],
+        };
+        setSlides(newSlides);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Reset on open/close
   useEffect(() => {
     if (isOpen) {
-      setStep('input');
-      setTopic('');
-      setOutline('');
-      setSlides([]);
+      resetForNewGeneration();
+      setStep('ready');
+      setLocalSettings({
+        title: '',
+        theme: 'mystique',
+        numSlides: 7,
+        style: 'professional',
+        contentStyle: 'balanced',
+        outline: [],
+      });
       setError(null);
       setCurrentSlideIndex(0);
-      
-      // Auto-suggest topic if there's context
-      const context = buildContext();
-      if (context && context.length >= 50) {
-        suggestTopic();
-      }
+      setRawSlideData('');
     }
-  }, [isOpen]);
+  }, [isOpen, resetForNewGeneration, setCurrentSlideIndex]);
 
   if (!isOpen) return null;
 
+  const currentTheme = themes[localSettings.theme];
+  const themeColors = localSettings.theme === 'gammaDark'
+    ? currentTheme.colors.dark
+    : currentTheme.colors.light;
+
+  const getSlideTitle = (slide: PlateSlide): string => {
+    const heading = (slide.content as any[])?.find((el: any) => el.type === 'h1' || el.type === 'h2');
+    return heading?.children?.[0]?.text || 'Untitled';
+  };
+
   return (
-    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm">
-      <div className="fixed inset-4 z-50 flex flex-col bg-background rounded-lg shadow-lg border overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b">
-          <div className="flex items-center gap-3">
-            <Presentation className="h-6 w-6 text-primary" />
-            <h2 className="text-lg font-semibold">Create Presentation</h2>
-            {step !== 'input' && (
-              <Badge variant="outline" className="ml-2">
-                {step === 'generating-outline' && 'Generating Outline...'}
-                {step === 'editing-outline' && 'Edit Outline'}
-                {step === 'generating-slides' && 'Generating Slides...'}
-                {step === 'viewing' && `Slide ${currentSlideIndex + 1} of ${slides.length}`}
-              </Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {step === 'viewing' && slides.length > 0 && (
-              <>
-                <Button
-                  onClick={savePresentation}
-                  disabled={isSaving}
-                  variant="outline"
-                  size="sm"
-                >
-                  {isSaving ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : saveSuccess ? (
-                    <Check className="h-4 w-4 mr-2 text-green-500" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  {saveSuccess ? 'Saved!' : 'Save to Cloud'}
-                </Button>
-                <Button
-                  onClick={downloadPresentation}
-                  variant="outline"
-                  size="sm"
-                  disabled={isDownloading || slides.length === 0}
-                >
-                  {isDownloading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4 mr-2" />
-                  )}
-                  {isDownloading ? 'Exporting...' : 'Download PPTX'}
-                </Button>
-              </>
-            )}
-            <Button onClick={onClose} variant="ghost" size="icon">
-              <X className="h-5 w-5" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Error Banner */}
-        {error && (
-          <div className="mx-4 mt-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">
-            {error}
-          </div>
-        )}
-
-        {/* Content */}
-        <div className="flex-1 overflow-auto p-6">
-          {/* Step 1: Input */}
-          {step === 'input' && (
-            <div className="max-w-2xl mx-auto space-y-6">
-              <div className="text-center mb-8">
-                <Sparkles className="h-12 w-12 mx-auto mb-4 text-primary" />
-                <h3 className="text-xl font-semibold mb-2">Generate Presentation from Meeting</h3>
-                <p className="text-muted-foreground">
-                  AI will create a presentation based on your meeting transcript and Q&A
-                </p>
+    <DndProvider backend={HTML5Backend}>
+      <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm">
+        <div className="fixed inset-4 z-50 flex flex-col bg-background rounded-lg shadow-lg border overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: `${themeColors.primary}20` }}>
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: themeColors.primary }}>
+                <Presentation className="h-5 w-5 text-white" />
               </div>
+              <h2 className="text-lg font-semibold">{localSettings.title || 'Create Presentation'}</h2>
+              {step !== 'ready' && step !== 'configure-basics' && (
+                <Badge variant="outline" style={{ borderColor: themeColors.primary, color: themeColors.primary }}>
+                  <Palette className="h-3 w-3 mr-1" />
+                  {currentTheme.name}
+                </Badge>
+              )}
+              {(step === 'generating-outline' || step === 'generating-slides') && (
+                <Badge variant="secondary">
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  {statusMessage || 'Processing...'}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {step === 'editing' && slides.length > 0 && (
+                <>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleImageUpload}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <Button onClick={() => fileInputRef.current?.click()} variant="outline" size="sm">
+                    <Upload className="h-4 w-4 mr-2" />
+                    Upload Image
+                  </Button>
+                  <Button onClick={() => setIsGridView(!isGridView)} variant="outline" size="sm">
+                    {isGridView ? <Edit3 className="h-4 w-4" /> : <LayoutGrid className="h-4 w-4" />}
+                  </Button>
+                  <Button onClick={savePresentation} disabled={isSaving} variant="outline" size="sm">
+                    {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> :
+                      saveSuccess ? <Check className="h-4 w-4 mr-2 text-green-500" /> :
+                        <Save className="h-4 w-4 mr-2" />}
+                    {saveSuccess ? 'Saved!' : 'Save'}
+                  </Button>
+                  <Button onClick={downloadPresentation} variant="outline" size="sm" disabled={isDownloading}>
+                    {isDownloading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+                    PPTX
+                  </Button>
+                </>
+              )}
+              <Button onClick={onClose} variant="ghost" size="icon"><X className="h-5 w-5" /></Button>
+            </div>
+          </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Presentation Topic</label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={topic}
-                      onChange={(e) => setTopic(e.target.value)}
-                      placeholder={isLoadingTopic ? "Generating topic..." : "e.g., Q3 Sales Review, Project Update, Meeting Summary"}
-                      className="flex-1"
-                      disabled={isLoadingTopic}
-                    />
-                    <Button
-                      onClick={suggestTopic}
-                      disabled={isLoadingTopic || (!transcript && aiResponses.length === 0)}
-                      variant="outline"
-                      title="Auto-generate topic from meeting content"
-                    >
-                      {isLoadingTopic ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Wand2 className="h-4 w-4" />
-                      )}
-                    </Button>
+          {error && (
+            <div className="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{error}</div>
+          )}
+
+          <div className="flex-1 overflow-auto p-6">
+
+            {/* STEP: Ready */}
+            {step === 'ready' && (
+              <div className="max-w-2xl mx-auto text-center space-y-6">
+                <Sparkles className="h-16 w-16 mx-auto" style={{ color: themeColors.primary }} />
+                <h3 className="text-2xl font-semibold">AI Presentation Generator</h3>
+                <p className="text-muted-foreground">Create stunning presentations from your meeting content</p>
+
+                <div className="bg-muted/50 rounded-lg p-6">
+                  <div className="flex justify-center gap-8 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-5 w-5" />
+                      <span>Transcript: {transcript ? `${transcript.split(/\s+/).length} words` : 'None'}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-5 w-5" />
+                      <span>Q&A: {aiResponses.length} items</span>
+                    </div>
                   </div>
-                  {isLoadingTopic && (
-                    <p className="text-xs text-muted-foreground mt-1">Analyzing meeting content...</p>
-                  )}
                 </div>
 
+                <Button
+                  onClick={() => setStep('configure-basics')}
+                  disabled={!transcript && aiResponses.length === 0}
+                  size="lg"
+                  className="w-full max-w-md"
+                  style={{ backgroundColor: themeColors.primary }}
+                >
+                  <Settings className="h-5 w-5 mr-2" />
+                  Get Started
+                </Button>
+              </div>
+            )}
+
+            {/* STEP: Configure Basics */}
+            {step === 'configure-basics' && (
+              <div className="max-w-4xl mx-auto space-y-8">
+                <div className="text-center">
+                  <h3 className="text-xl font-semibold">Configure Your Presentation</h3>
+                  <p className="text-muted-foreground">Choose theme, style, and number of slides</p>
+                </div>
+
+                {/* Title */}
                 <div>
-                  <label className="block text-sm font-medium mb-2">Number of Slides</label>
+                  <label className="text-sm font-medium mb-2 block">Title (optional - AI will suggest)</label>
                   <Input
-                    type="number"
-                    value={numSlides}
-                    onChange={(e) => setNumSlides(Math.max(3, Math.min(20, parseInt(e.target.value) || 5)))}
-                    min={3}
-                    max={20}
-                    className="w-32"
+                    value={localSettings.title}
+                    onChange={(e) => setLocalSettings(p => ({ ...p, title: e.target.value }))}
+                    placeholder="Leave empty for AI suggestion"
+                    className="max-w-md"
                   />
                 </div>
 
-                <div className="bg-muted/50 rounded-lg p-4">
-                  <h4 className="text-sm font-medium mb-2">Content Sources</h4>
-                  <div className="space-y-2 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      <FileText className="h-4 w-4" />
-                      <span>
-                        Transcript: {transcript ? `${transcript.split(/\s+/).length} words` : 'None'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="h-4 w-4" />
-                      <span>
-                        AI Q&A: {aiResponses.length} responses
-                      </span>
-                    </div>
+                {/* Number of Slides */}
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Number of Slides: {localSettings.numSlides}</label>
+                  <input
+                    type="range"
+                    min={3}
+                    max={15}
+                    value={localSettings.numSlides}
+                    onChange={(e) => setLocalSettings(p => ({ ...p, numSlides: parseInt(e.target.value) }))}
+                    className="w-full max-w-md"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground max-w-md">
+                    <span>3 slides</span>
+                    <span>15 slides</span>
                   </div>
                 </div>
 
-                <Button
-                  onClick={generateOutline}
-                  disabled={!topic.trim() || isGenerating}
-                  className="w-full"
-                  size="lg"
-                >
-                  {isGenerating ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-4 w-4 mr-2" />
-                  )}
-                  Generate Outline
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 2: Generating Outline */}
-          {step === 'generating-outline' && (
-            <div className="max-w-2xl mx-auto space-y-6">
-              <div className="text-center mb-8">
-                <Loader2 className="h-12 w-12 mx-auto mb-4 text-primary animate-spin" />
-                <h3 className="text-xl font-semibold mb-2">Generating Outline...</h3>
-              </div>
-              
-              <div className="bg-muted rounded-lg p-4 min-h-[300px]">
-                <pre className="whitespace-pre-wrap text-sm font-mono">{outline}</pre>
-              </div>
-            </div>
-          )}
-
-          {/* Step 3: Edit Outline */}
-          {step === 'editing-outline' && (
-            <div className="max-w-2xl mx-auto space-y-6">
-              <div className="text-center mb-4">
-                <Edit3 className="h-8 w-8 mx-auto mb-2 text-primary" />
-                <h3 className="text-lg font-semibold">Review & Edit Outline</h3>
-                <p className="text-sm text-muted-foreground">
-                  Edit the outline below, then generate slides
-                </p>
-              </div>
-              
-              <Textarea
-                value={outline}
-                onChange={(e) => setOutline(e.target.value)}
-                className="min-h-[400px] font-mono text-sm"
-              />
-
-              <div className="flex gap-3">
-                <Button
-                  onClick={() => setStep('input')}
-                  variant="outline"
-                  className="flex-1"
-                >
-                  <ChevronLeft className="h-4 w-4 mr-2" />
-                  Back
-                </Button>
-                <Button
-                  onClick={generateOutline}
-                  variant="outline"
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Regenerate
-                </Button>
-                <Button
-                  onClick={generateSlides}
-                  disabled={!outline.trim() || isGenerating}
-                  className="flex-1"
-                >
-                  {isGenerating ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-4 w-4 mr-2" />
-                  )}
-                  Generate Slides
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 4: Generating Slides */}
-          {step === 'generating-slides' && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              <div className="text-center mb-8">
-                <Loader2 className="h-12 w-12 mx-auto mb-4 text-primary animate-spin" />
-                <h3 className="text-xl font-semibold mb-2">Generating Slides...</h3>
-                <p className="text-muted-foreground">
-                  {slides.length} slides created so far
-                </p>
-              </div>
-              
-              {slides.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {slides.map((slide, idx) => (
-                    <SlidePreview key={idx} slide={slide} index={idx} />
-                  ))}
+                {/* Theme Selection */}
+                <div>
+                  <label className="text-sm font-medium mb-3 block">Choose Theme</label>
+                  <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
+                    {THEME_LIST.map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => setLocalSettings(p => ({ ...p, theme: t.id }))}
+                        className={`p-3 rounded-lg border-2 transition-all ${localSettings.theme === t.id ? 'ring-2 ring-offset-2' : 'hover:border-gray-300'}`}
+                        style={{
+                          borderColor: localSettings.theme === t.id ? t.primary : '#e5e7eb',
+                          ...(localSettings.theme === t.id ? { '--tw-ring-color': t.primary } as any : {})
+                        }}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-4 h-4 rounded-full" style={{ backgroundColor: t.primary }} />
+                          <div className="w-4 h-4 rounded-full border" style={{ backgroundColor: t.bg }} />
+                        </div>
+                        <p className="text-sm font-medium">{t.name}</p>
+                        <p className="text-xs text-muted-foreground">{t.desc}</p>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* Step 5: View/Edit Slides */}
-          {step === 'viewing' && slides.length > 0 && (
-            <div className="h-full flex flex-col">
-              {/* Slide Navigator */}
-              <div className="flex items-center justify-center gap-4 mb-4">
-                <Button
-                  onClick={() => setCurrentSlideIndex(Math.max(0, currentSlideIndex - 1))}
-                  disabled={currentSlideIndex === 0}
-                  variant="outline"
-                  size="icon"
-                >
-                  <ChevronLeft className="h-5 w-5" />
-                </Button>
-                <span className="text-sm font-medium">
-                  Slide {currentSlideIndex + 1} of {slides.length}
-                </span>
-                <Button
-                  onClick={() => setCurrentSlideIndex(Math.min(slides.length - 1, currentSlideIndex + 1))}
-                  disabled={currentSlideIndex === slides.length - 1}
-                  variant="outline"
-                  size="icon"
-                >
-                  <ChevronRight className="h-5 w-5" />
-                </Button>
+                {/* Content Style */}
+                <div>
+                  <label className="text-sm font-medium mb-3 block">Content Style</label>
+                  <div className="grid grid-cols-3 gap-3 max-w-lg">
+                    {CONTENT_STYLES.map((cs) => (
+                      <button
+                        key={cs.id}
+                        onClick={() => setLocalSettings(p => ({ ...p, contentStyle: cs.id }))}
+                        className={`p-4 rounded-lg border-2 text-left transition-all ${localSettings.contentStyle === cs.id ? 'border-primary bg-primary/5' : 'hover:border-gray-300'}`}
+                        style={{ borderColor: localSettings.contentStyle === cs.id ? themeColors.primary : '#e5e7eb' }}
+                      >
+                        <cs.icon className="h-6 w-6 mb-2" style={{ color: localSettings.contentStyle === cs.id ? themeColors.primary : '#6b7280' }} />
+                        <p className="font-medium text-sm">{cs.name}</p>
+                        <p className="text-xs text-muted-foreground">{cs.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex justify-center gap-4 pt-4">
+                  <Button onClick={() => setStep('ready')} variant="outline">Back</Button>
+                  <Button onClick={generateOutline} size="lg" style={{ backgroundColor: themeColors.primary }}>
+                    Generate Outline <ArrowRight className="h-4 w-4 ml-2" />
+                  </Button>
+                </div>
               </div>
+            )}
 
-              {/* Main Slide View */}
-              <div className="flex-1 flex gap-6">
-                {/* Slide Thumbnails */}
-                <div className="w-48 space-y-2 overflow-auto">
-                  {slides.map((slide, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setCurrentSlideIndex(idx)}
-                      className={`w-full rounded-lg border transition-colors ${
-                        idx === currentSlideIndex
-                          ? 'border-primary ring-2 ring-primary/30'
-                          : 'border-muted hover:border-primary/50'
-                      }`}
+            {/* STEP: Generating Outline */}
+            {step === 'generating-outline' && (
+              <div className="max-w-md mx-auto text-center">
+                <Loader2 className="h-12 w-12 mx-auto mb-4 animate-spin" style={{ color: themeColors.primary }} />
+                <h3 className="text-xl font-semibold">Generating Outline</h3>
+                <p className="text-muted-foreground">{statusMessage || 'Analyzing your content...'}</p>
+              </div>
+            )}
+
+            {/* STEP: Review Outline */}
+            {step === 'review-outline' && (
+              <div className="max-w-3xl mx-auto space-y-6">
+                <div className="text-center">
+                  <h3 className="text-xl font-semibold">Review Outline</h3>
+                  <p className="text-muted-foreground">Edit topics before generating slides</p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Presentation Title</label>
+                  <Input
+                    value={localSettings.title}
+                    onChange={(e) => setLocalSettings(p => ({ ...p, title: e.target.value }))}
+                    className="text-lg"
+                  />
+                </div>
+
+                {/* Preview Card */}
+                <div className="rounded-lg p-4 border" style={{ backgroundColor: themeColors.background, borderColor: `${themeColors.primary}30` }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: themeColors.primary }} />
+                    <span className="text-sm font-medium" style={{ color: themeColors.text }}>{currentTheme.name} Theme</span>
+                  </div>
+                  <h4 className="text-lg font-semibold" style={{ color: themeColors.heading }}>{localSettings.title}</h4>
+                  <p className="text-sm" style={{ color: themeColors.muted }}>{localSettings.outline.length} slides · {localSettings.contentStyle}</p>
+                </div>
+
+                {/* Outline Items */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-sm font-medium">Slide Topics</label>
+                    <Button onClick={addOutlineItem} size="sm" variant="outline">
+                      <Plus className="h-4 w-4 mr-1" /> Add
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    {localSettings.outline.map((item, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-medium text-white" style={{ backgroundColor: themeColors.primary }}>{idx + 1}</div>
+                        <Input value={item} onChange={(e) => updateOutlineItem(idx, e.target.value)} className="flex-1" />
+                        <Button onClick={() => removeOutlineItem(idx)} size="icon" variant="ghost" className="text-red-500 hover:bg-red-50">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex justify-center gap-4 pt-4">
+                  <Button onClick={() => setStep('configure-basics')} variant="outline">Back</Button>
+                  <Button onClick={generateSlides} size="lg" style={{ backgroundColor: themeColors.primary }}>
+                    <Sparkles className="h-5 w-5 mr-2" />
+                    Generate Slides
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP: Generating Slides */}
+            {step === 'generating-slides' && (
+              <div className="max-w-4xl mx-auto space-y-6">
+                <div className="text-center">
+                  <Loader2 className="h-12 w-12 mx-auto mb-4 animate-spin" style={{ color: themeColors.primary }} />
+                  <h3 className="text-xl font-semibold">Creating Your Slides</h3>
+                  <p className="text-muted-foreground">{statusMessage}</p>
+                </div>
+                {slides.length > 0 && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {slides.map((slide, idx) => (
+                      <div key={idx} className="rounded-lg border p-4 aspect-video" style={{ backgroundColor: themeColors.background, borderColor: `${themeColors.primary}30` }}>
+                        <p className="font-medium text-sm" style={{ color: themeColors.text }}>{getSlideTitle(slide)}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* STEP: Editing with Plate.js Editor */}
+            {step === 'editing' && slides.length > 0 && (
+              <div className="h-full flex flex-col">
+                {/* Toolbar */}
+                <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={() => setCurrentSlideIndex(Math.max(0, currentSlideIndex - 1))}
+                      disabled={currentSlideIndex === 0}
+                      variant="outline"
+                      size="icon"
                     >
-                      <SlidePreview slide={slide} index={idx} compact />
-                    </button>
-                  ))}
+                      <ChevronLeft className="h-5 w-5" />
+                    </Button>
+                    <span className="text-sm font-medium px-2">Slide {currentSlideIndex + 1} / {slides.length}</span>
+                    <Button
+                      onClick={() => setCurrentSlideIndex(Math.min(slides.length - 1, currentSlideIndex + 1))}
+                      disabled={currentSlideIndex === slides.length - 1}
+                      variant="outline"
+                      size="icon"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </Button>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button onClick={addSlide} variant="outline" size="sm">
+                      <Plus className="h-4 w-4 mr-1" /> Slide
+                    </Button>
+                    <Button onClick={() => setStep('review-outline')} variant="outline" size="sm">
+                      <RefreshCw className="h-4 w-4 mr-1" /> Regenerate
+                    </Button>
+                  </div>
                 </div>
 
-                {/* Current Slide */}
-                <div className="flex-1 bg-white rounded-lg shadow-lg p-8 aspect-[16/9] overflow-auto">
-                  <SlideContent slide={slides[currentSlideIndex]} />
-                </div>
+                {/* Grid View or Editor View */}
+                {isGridView ? (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 overflow-auto">
+                    {slides.map((slide, idx) => (
+                      <div
+                        key={slide.id}
+                        onClick={() => { setCurrentSlideIndex(idx); setIsGridView(false); }}
+                        className={`relative group rounded-lg border p-4 aspect-video cursor-pointer transition-all hover:ring-2 ${idx === currentSlideIndex ? 'ring-2' : ''}`}
+                        style={{
+                          backgroundColor: themeColors.background,
+                          borderColor: idx === currentSlideIndex ? themeColors.primary : '#e5e7eb',
+                          '--tw-ring-color': themeColors.primary
+                        } as any}
+                      >
+                        <p className="font-medium text-sm" style={{ color: themeColors.heading }}>{getSlideTitle(slide)}</p>
+                        <p className="text-xs mt-1" style={{ color: themeColors.muted }}>
+                          {(slide.content as any[])?.length || 0} elements
+                        </p>
+                        {slides.length > 1 && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeSlide(idx); }}
+                            className="absolute top-2 right-2 p-1 opacity-0 group-hover:opacity-100 hover:bg-red-50 rounded"
+                          >
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex-1 flex gap-4 min-h-0">
+                    {/* Slide Thumbnails */}
+                    <div className="w-48 shrink-0 overflow-y-auto space-y-2 pr-2">
+                      {slides.map((slide, idx) => (
+                        <div
+                          key={slide.id}
+                          onClick={() => setCurrentSlideIndex(idx)}
+                          className={`relative group rounded-lg border p-3 cursor-pointer transition-all ${idx === currentSlideIndex ? 'ring-2' : 'hover:border-gray-300'}`}
+                          style={{
+                            backgroundColor: themeColors.background,
+                            borderColor: idx === currentSlideIndex ? themeColors.primary : '#e5e7eb',
+                            '--tw-ring-color': themeColors.primary
+                          } as any}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium" style={{ color: themeColors.muted }}>{idx + 1}</span>
+                            <p className="text-xs truncate flex-1" style={{ color: themeColors.text }}>{getSlideTitle(slide)}</p>
+                          </div>
+                          {slides.length > 1 && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); removeSlide(idx); }}
+                              className="absolute top-1 right-1 p-1 opacity-0 group-hover:opacity-100 hover:bg-red-50 rounded"
+                            >
+                              <Trash2 className="h-3 w-3 text-red-500" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Main Plate.js Editor */}
+                    <div
+                      className="flex-1 rounded-lg overflow-hidden min-h-[500px]"
+                      style={{ backgroundColor: themeColors.background }}
+                    >
+                      <React.Suspense fallback={
+                        <div className="flex items-center justify-center h-full">
+                          <Loader2 className="h-8 w-8 animate-spin" style={{ color: themeColors.primary }} />
+                        </div>
+                      }>
+                        <PlateEditor
+                          key={slides[currentSlideIndex]?.id}
+                          initialContent={slides[currentSlideIndex]}
+                          slideIndex={currentSlideIndex}
+                          isGenerating={isGeneratingPresentation}
+                          readOnly={false}
+                          isPreview={false}
+                        />
+                      </React.Suspense>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </DndProvider>
   );
 }
 
-// Slide Preview Thumbnail
-function SlidePreview({ slide, index, compact = false }: { slide: Slide; index: number; compact?: boolean }) {
-  const headingElement = slide.content?.find((el: SlideElement) => 
-    el.type === 'h1' || el.type === 'h2' || el.type === 'h3'
-  );
-  const title = headingElement?.children?.[0]?.text || `Slide ${index + 1}`;
-  
-  return (
-    <div className={`bg-white rounded border ${compact ? 'p-2' : 'p-3'} aspect-[16/9]`}>
-      <p className={`font-medium truncate ${compact ? 'text-xs' : 'text-sm'}`}>
-        {typeof title === 'string' ? title : 'Slide'}
-      </p>
-      <p className={`text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
-        {slide.content?.length || 0} elements
-      </p>
-    </div>
-  );
-}
-
-// Slide Content Renderer
-function SlideContent({ slide }: { slide: Slide }) {
-  return (
-    <div className="h-full flex flex-col">
-      {slide.content?.map((element: SlideElement, idx: number) => (
-        <SlideElementRenderer key={idx} element={element} />
-      ))}
-    </div>
-  );
-}
-
-// Element Renderer
-function SlideElementRenderer({ element }: { element: SlideElement }) {
-  // Handle heading elements
-  if (element.type === 'h1' || element.type === 'h2' || element.type === 'h3') {
-    const text = element.children?.map((child: any) => child.text || '').join('') || '';
-    const fontSize = element.type === 'h1' ? 'text-3xl' : element.type === 'h2' ? 'text-2xl' : 'text-xl';
-    return (
-      <h2 className={`${fontSize} font-bold text-gray-900 mb-4`}>
-        {text}
-      </h2>
-    );
-  }
-  
-  // Handle paragraph elements
-  if (element.type === 'p') {
-    const text = element.children?.map((child: any) => child.text || '').join('') || '';
-    return (
-      <p className="text-gray-700 mb-3">
-        {text}
-      </p>
-    );
-  }
-  
-  // Handle bullet groups
-  if (element.type === 'bullets' && Array.isArray(element.children)) {
-    return (
-      <ul className="list-disc list-inside space-y-2 mb-4">
-        {element.children.map((item: any, idx: number) => {
-          const text = item.children?.map((child: any) => child.text || '').join('') || '';
-          return (
-            <li key={idx} className="text-gray-700">
-              {text}
-            </li>
-          );
-        })}
-      </ul>
-    );
-  }
-  
-  // Handle image elements
-  if (element.type === 'img') {
-    return (
-      <div className="my-4 p-4 bg-gray-100 rounded-lg text-center text-gray-500">
-        <span className="text-sm">📷 Image: {element.query || 'No query'}</span>
-      </div>
-    );
-  }
-  
-  // Handle icon lists
-  if (element.type === 'icons' && Array.isArray(element.children)) {
-    return (
-      <div className="grid grid-cols-3 gap-4 mb-4">
-        {element.children.map((item: any, idx: number) => {
-          const text = item.children?.map((child: any) => child.text || '').join('') || '';
-          return (
-            <div key={idx} className="p-3 bg-gray-50 rounded-lg text-center">
-              <span className="text-2xl mb-2 block">📌</span>
-              <span className="text-sm text-gray-700">{text}</span>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-  
-  // Handle timeline
-  if (element.type === 'timeline' && Array.isArray(element.children)) {
-    return (
-      <div className="space-y-3 mb-4 border-l-2 border-primary pl-4">
-        {element.children.map((item: any, idx: number) => {
-          const text = item.children?.map((child: any) => child.text || '').join('') || '';
-          return (
-            <div key={idx} className="relative">
-              <div className="absolute -left-[21px] w-3 h-3 rounded-full bg-primary" />
-              <p className="text-gray-700">{text}</p>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-  
-  // Handle arrows
-  if (element.type === 'arrows' && Array.isArray(element.children)) {
-    return (
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {element.children.map((item: any, idx: number) => {
-          const text = item.children?.map((child: any) => child.text || '').join('') || '';
-          return (
-            <div key={idx} className="flex items-center">
-              <span className="px-3 py-2 bg-primary/10 rounded text-sm">{text}</span>
-              {idx < element.children.length - 1 && <span className="mx-2 text-primary">→</span>}
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-  
-  // Default fallback
-  return (
-    <div className="my-2 p-2 bg-gray-50 rounded text-sm text-gray-600">
-      {element.type}: {JSON.stringify(element.children || element).slice(0, 100)}
-    </div>
-  );
-}
+export default PresentationEditor;

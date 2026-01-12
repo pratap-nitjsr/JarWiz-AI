@@ -92,10 +92,11 @@ class RAGPipeline:
                 web_results = await self.web_search.search(user_query, num_results=3)
                 web_search_reason = f"Search mode: {search_mode}"
                 logger.info(f"Web search: {len(web_results)} results")
-            elif search_mode == "both" and document_confidence < 0.5:
-                # Auto web search if vector results are weak
+            
+            # Auto web search if vector results are weak and web search wasn't already performed
+            if not web_results and search_mode == "vector_only" and document_confidence < 0.3:
                 web_results = await self.web_search.search(user_query, num_results=3)
-                web_search_reason = "Low document confidence, supplementing with web search"
+                web_search_reason = "Low document confidence, fallback to web search"
                 logger.info(f"Auto web search triggered: {web_search_reason}")
             
             # Step 3: Generate answer with LLM

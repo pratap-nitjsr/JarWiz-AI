@@ -144,7 +144,7 @@ export const apiClient = {
       }
 
       //console.log('Sending stream request:', JSON.stringify(request));
-      
+
       const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
         method: 'POST',
         headers: {
@@ -184,7 +184,7 @@ export const apiClient = {
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const data = JSON.parse(line.slice(6));
-            
+
             if (data.type === 'chunk') {
               onChunk(data.content);
             } else if (data.type === 'done') {
@@ -217,7 +217,112 @@ export const apiClient = {
     return response.data;
   },
 
-  // Presentation operations
+  // Presentation operations - Enhanced for Plate.js integration
+
+  // Get available themes
+  getPresentationThemes: async (): Promise<{ themes: string[] }> => {
+    const response = await api.get('/api/presentation/themes');
+    return response.data;
+  },
+
+  // Extract AI-generated settings from context
+  extractPresentationSettings: async (context: string): Promise<{
+    success: boolean;
+    settings: {
+      title: string;
+      theme: string;
+      numSlides: number;
+      style: string;
+      outline: string[];
+    };
+  }> => {
+    const response = await api.post('/api/presentation/extract-settings', { context });
+    return response.data;
+  },
+
+  // Auto-generate complete presentation with streaming
+  autoGeneratePresentation: async (
+    context: string,
+    settings: { title?: string; theme?: string; numSlides?: number; style?: string; outline?: string[] } | null,
+    onStatus: (message: string) => void,
+    onSettings: (settings: any) => void,
+    onSlideChunk: (chunk: string) => void,
+    onDone: () => void,
+    onError: (error: string) => void
+  ): Promise<void> => {
+    try {
+      let authToken = '';
+      const authStorage = localStorage.getItem('auth-storage');
+      if (authStorage) {
+        try {
+          const { state } = JSON.parse(authStorage);
+          if (state?.accessToken) {
+            authToken = state.accessToken;
+          }
+        } catch (e) {
+          console.error('Error parsing auth storage:', e);
+        }
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/presentation/auto-generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authToken ? `Bearer ${authToken}` : '',
+        },
+        body: JSON.stringify({ context, settings }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          localStorage.removeItem('auth-storage');
+          window.location.href = '/auth/login';
+          throw new Error('Session expired');
+        }
+        throw new Error(`HTTP error: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) throw new Error('No response body');
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          onDone();
+          break;
+        }
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'status') {
+                onStatus(data.message);
+              } else if (data.type === 'settings') {
+                onSettings(data.data);
+              } else if (data.type === 'slide_chunk') {
+                onSlideChunk(data.content);
+              } else if (data.type === 'done') {
+                onDone();
+              } else if (data.type === 'error') {
+                onError(data.message);
+              }
+            } catch {
+              // Ignore parse errors
+            }
+          }
+        }
+      }
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  },
+
   suggestPresentationTopic: async (context: string): Promise<{ topic: string }> => {
     const response = await api.post('/api/presentation/suggest-topic', { context });
     return response.data;
@@ -232,7 +337,6 @@ export const apiClient = {
     onError: (error: string) => void
   ): Promise<void> => {
     try {
-      // Get auth token
       let authToken = '';
       const authStorage = localStorage.getItem('auth-storage');
       if (authStorage) {
@@ -263,18 +367,15 @@ export const apiClient = {
         if (response.status === 401) {
           localStorage.removeItem('auth-storage');
           window.location.href = '/auth/login';
-          throw new Error('Session expired. Please login again.');
+          throw new Error('Session expired');
         }
-        const errorBody = await response.text();
-        throw new Error(`HTTP error! status: ${response.status} - ${errorBody}`);
+        throw new Error(`HTTP error: ${response.status}`);
       }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
-      if (!reader) {
-        throw new Error('No response body');
-      }
+      if (!reader) throw new Error('No response body');
 
       while (true) {
         const { done, value } = await reader.read();
@@ -298,7 +399,7 @@ export const apiClient = {
                 onError(data.message);
               }
             } catch {
-              // Ignore parse errors for partial data
+              // Ignore parse errors
             }
           }
         }
@@ -314,10 +415,11 @@ export const apiClient = {
     additionalInstructions: string,
     onChunk: (chunk: string) => void,
     onDone: () => void,
-    onError: (error: string) => void
+    onError: (error: string) => void,
+    theme: string = 'default',
+    style: string = 'professional'
   ): Promise<void> => {
     try {
-      // Get auth token
       let authToken = '';
       const authStorage = localStorage.getItem('auth-storage');
       if (authStorage) {
@@ -341,6 +443,8 @@ export const apiClient = {
           topic,
           outline,
           additional_instructions: additionalInstructions,
+          theme,
+          style,
         }),
       });
 
@@ -348,18 +452,15 @@ export const apiClient = {
         if (response.status === 401) {
           localStorage.removeItem('auth-storage');
           window.location.href = '/auth/login';
-          throw new Error('Session expired. Please login again.');
+          throw new Error('Session expired');
         }
-        const errorBody = await response.text();
-        throw new Error(`HTTP error! status: ${response.status} - ${errorBody}`);
+        throw new Error(`HTTP error: ${response.status}`);
       }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
-      if (!reader) {
-        throw new Error('No response body');
-      }
+      if (!reader) throw new Error('No response body');
 
       while (true) {
         const { done, value } = await reader.read();
@@ -383,7 +484,7 @@ export const apiClient = {
                 onError(data.message);
               }
             } catch {
-              // Ignore parse errors for partial data
+              // Ignore parse errors
             }
           }
         }
@@ -396,13 +497,31 @@ export const apiClient = {
   savePresentation: async (
     title: string,
     slides: any[],
-    outline: string
+    outline: string,
+    theme: string = 'default',
+    style: string = 'professional'
   ): Promise<{ success: boolean; url?: string; public_id?: string; presentation_id?: string }> => {
     const response = await api.post('/api/presentation/save', {
       title,
       slides,
       outline,
+      theme,
+      style,
     });
+    return response.data;
+  },
+
+  updatePresentation: async (
+    presentationId: string,
+    updates: {
+      title?: string;
+      slides?: any[];
+      outline?: string;
+      theme?: string;
+      style?: string;
+    }
+  ): Promise<{ success: boolean; presentation_id: string }> => {
+    const response = await api.put(`/api/presentation/${presentationId}`, updates);
     return response.data;
   },
 
@@ -414,6 +533,7 @@ export const apiClient = {
       presentation_id: string;
       title: string;
       slide_count: number;
+      theme?: string;
       cloudinary_url?: string;
       created_at: string;
     }>;
@@ -435,6 +555,8 @@ export const apiClient = {
     outline: string;
     slides: any[];
     slide_count: number;
+    theme?: string;
+    style?: string;
     cloudinary_url?: string;
     created_at: string;
     updated_at: string;

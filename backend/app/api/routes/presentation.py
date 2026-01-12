@@ -1,4 +1,4 @@
-"""Presentation API routes"""
+"""Presentation API routes with Plate.js JSON support"""
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -10,7 +10,7 @@ import uuid
 
 from ..auth_dependencies import get_current_user
 from ..dependencies import get_llm_service, get_cloudinary_service
-from ...services.presentation_service import PresentationService
+from ...services.presentation_service import PresentationService, AVAILABLE_THEMES
 from ...db.mongodb import get_db
 from ...models.auth import User
 
@@ -18,13 +18,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/presentation", tags=["presentation"])
 
 
+# Request models
 class TopicRequest(BaseModel):
     """Request for generating automatic topic"""
     context: str
 
 
+class AutoGenerateRequest(BaseModel):
+    """Request for auto-generating presentation with AI-determined settings"""
+    context: str
+    settings: Optional[dict] = None  # Optional manual override
+
+
 class OutlineRequest(BaseModel):
-    """Request for generating presentation outline"""
+    """Request for generating presentation outline (legacy)"""
     topic: str
     num_slides: int = 5
     additional_context: Optional[str] = None
@@ -35,15 +42,29 @@ class SlidesRequest(BaseModel):
     topic: str
     outline: str
     additional_instructions: Optional[str] = None
+    theme: str = "default"
+    style: str = "professional"
 
 
 class SavePresentationRequest(BaseModel):
-    """Request for saving presentation to Cloudinary"""
+    """Request for saving presentation"""
     title: str
     slides: List[dict]
-    outline: str
+    outline: Optional[str] = None
+    theme: str = "default"
+    style: str = "professional"
 
 
+class UpdatePresentationRequest(BaseModel):
+    """Request for updating existing presentation"""
+    title: Optional[str] = None
+    slides: Optional[List[dict]] = None
+    outline: Optional[str] = None
+    theme: Optional[str] = None
+    style: Optional[str] = None
+
+
+# Helper functions
 def _parse_outline_to_list(outline: str) -> List[str]:
     """Parse markdown outline string into list of topics"""
     topics = []
@@ -76,15 +97,73 @@ def _parse_outline_to_list(outline: str) -> List[str]:
     return topics if topics else [outline]
 
 
+# Endpoints
+@router.get("/themes")
+async def get_available_themes():
+    """Get list of available presentation themes"""
+    return {"themes": AVAILABLE_THEMES}
+
+
+@router.post("/extract-settings")
+async def extract_settings(
+    request: TopicRequest,
+    user: User = Depends(get_current_user),
+    llm_service = Depends(get_llm_service)
+):
+    """
+    AI-extract optimal presentation settings from meeting context
+    Returns: title, theme, numSlides, style, outline
+    """
+    try:
+        presentation_service = PresentationService(llm_service)
+        settings = await presentation_service.extract_presentation_settings(request.context)
+        return {"success": True, "settings": settings}
+    except Exception as e:
+        logger.error(f"Error extracting settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/auto-generate")
+async def auto_generate_presentation(
+    request: AutoGenerateRequest,
+    user: User = Depends(get_current_user),
+    llm_service = Depends(get_llm_service)
+):
+    """
+    Auto-generate complete presentation with streaming
+    AI determines optimal settings from context, or uses provided settings
+    """
+    async def generate_stream():
+        try:
+            presentation_service = PresentationService(llm_service)
+            
+            async for chunk in presentation_service.generate_presentation_stream(
+                context=request.context,
+                settings=request.settings
+            ):
+                yield f"data: {chunk}\n\n"
+                
+        except Exception as e:
+            logger.error(f"Error in auto-generate: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
 @router.post("/suggest-topic")
 async def suggest_topic(
     request: TopicRequest,
     user: User = Depends(get_current_user),
     llm_service = Depends(get_llm_service)
 ):
-    """
-    Generate a suggested presentation topic from meeting context
-    """
+    """Generate a suggested presentation topic from meeting context (legacy)"""
     try:
         presentation_service = PresentationService(llm_service)
         topic = await presentation_service.generate_topic_from_context(request.context)
@@ -100,9 +179,7 @@ async def generate_outline(
     user: User = Depends(get_current_user),
     llm_service = Depends(get_llm_service)
 ):
-    """
-    Generate a presentation outline from meeting context (streaming)
-    """
+    """Generate a presentation outline (streaming, legacy)"""
     async def generate_stream():
         try:
             presentation_service = PresentationService(llm_service)
@@ -136,13 +213,10 @@ async def generate_slides(
     user: User = Depends(get_current_user),
     llm_service = Depends(get_llm_service)
 ):
-    """
-    Generate presentation slides (streaming)
-    """
+    """Generate presentation slides (streaming Plate.js JSON)"""
     async def generate_stream():
         try:
             logger.info(f"Starting slides generation for topic: {request.topic}")
-            logger.info(f"Outline length: {len(request.outline)}")
             
             presentation_service = PresentationService(llm_service)
             outline_list = _parse_outline_to_list(request.outline)
@@ -154,11 +228,11 @@ async def generate_slides(
                 title=request.topic,
                 prompt=request.topic,
                 outline=outline_list,
-                context=request.additional_instructions
+                context=request.additional_instructions,
+                theme=request.theme,
+                style=request.style
             ):
                 chunk_count += 1
-                if chunk_count == 1:
-                    logger.info("First chunk received from service")
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
             
             logger.info(f"Slides generation completed, sent {chunk_count} chunks")
@@ -185,9 +259,7 @@ async def save_presentation(
     cloudinary_service = Depends(get_cloudinary_service),
     db = Depends(get_db)
 ):
-    """
-    Save presentation to Cloudinary and MongoDB
-    """
+    """Save presentation to MongoDB (and optionally Cloudinary)"""
     try:
         user_id = user.id or "anonymous"
         presentation_id = str(uuid.uuid4())
@@ -195,7 +267,9 @@ async def save_presentation(
         presentation_data = {
             "title": request.title,
             "slides": request.slides,
-            "outline": request.outline,
+            "outline": request.outline or "",
+            "theme": request.theme,
+            "style": request.style,
             "user_id": user_id
         }
         
@@ -218,9 +292,11 @@ async def save_presentation(
             "presentation_id": presentation_id,
             "user_id": user_id,
             "title": request.title,
-            "outline": request.outline,
+            "outline": request.outline or "",
             "slides": request.slides,
             "slide_count": len(request.slides),
+            "theme": request.theme,
+            "style": request.style,
             "cloudinary_url": cloudinary_url,
             "cloudinary_public_id": cloudinary_public_id,
             "created_at": datetime.utcnow(),
@@ -242,6 +318,56 @@ async def save_presentation(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/{presentation_id}")
+async def update_presentation(
+    presentation_id: str,
+    request: UpdatePresentationRequest,
+    user: User = Depends(get_current_user),
+    db = Depends(get_db)
+):
+    """Update an existing presentation"""
+    try:
+        user_id = user.id or "anonymous"
+        
+        # Check ownership
+        existing = await db.presentations.find_one(
+            {"presentation_id": presentation_id, "user_id": user_id}
+        )
+        
+        if not existing:
+            raise HTTPException(status_code=404, detail="Presentation not found")
+        
+        # Build update document
+        update_doc = {"updated_at": datetime.utcnow()}
+        
+        if request.title is not None:
+            update_doc["title"] = request.title
+        if request.slides is not None:
+            update_doc["slides"] = request.slides
+            update_doc["slide_count"] = len(request.slides)
+        if request.outline is not None:
+            update_doc["outline"] = request.outline
+        if request.theme is not None:
+            update_doc["theme"] = request.theme
+        if request.style is not None:
+            update_doc["style"] = request.style
+        
+        await db.presentations.update_one(
+            {"presentation_id": presentation_id},
+            {"$set": update_doc}
+        )
+        
+        logger.info(f"Presentation updated: {presentation_id}")
+        
+        return {"success": True, "presentation_id": presentation_id}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating presentation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/list")
 async def list_presentations(
     user: User = Depends(get_current_user),
@@ -249,9 +375,7 @@ async def list_presentations(
     limit: int = 20,
     skip: int = 0
 ):
-    """
-    List all presentations for the current user
-    """
+    """List all presentations for the current user"""
     try:
         user_id = user.id or "anonymous"
         
@@ -261,6 +385,7 @@ async def list_presentations(
                 "presentation_id": 1,
                 "title": 1,
                 "slide_count": 1,
+                "theme": 1,
                 "cloudinary_url": 1,
                 "created_at": 1,
                 "_id": 0
@@ -269,12 +394,11 @@ async def list_presentations(
         
         presentations = await cursor.to_list(length=limit)
         
-        # Convert datetime to ISO string for JSON serialization
+        # Convert datetime to ISO string
         for pres in presentations:
             if pres.get("created_at"):
                 pres["created_at"] = pres["created_at"].isoformat()
         
-        # Get total count
         total = await db.presentations.count_documents({"user_id": user_id})
         
         return {
@@ -295,9 +419,7 @@ async def get_presentation(
     user: User = Depends(get_current_user),
     db = Depends(get_db)
 ):
-    """
-    Get a specific presentation by ID
-    """
+    """Get a specific presentation by ID"""
     try:
         user_id = user.id or "anonymous"
         
@@ -331,13 +453,10 @@ async def delete_presentation(
     db = Depends(get_db),
     cloudinary_service = Depends(get_cloudinary_service)
 ):
-    """
-    Delete a presentation
-    """
+    """Delete a presentation"""
     try:
         user_id = user.id or "anonymous"
         
-        # Get presentation first to check ownership and get cloudinary ID
         presentation = await db.presentations.find_one(
             {"presentation_id": presentation_id, "user_id": user_id}
         )

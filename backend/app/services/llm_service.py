@@ -62,7 +62,7 @@ Instructions:
 3. For information from documents, cite the page number using the format [Page X]
 4. For information from web sources, cite using the format [Web: Source Title]
 5. If neither source has the answer, clearly state that
-6. Be concise but thorough in your response
+6. Be concise but thorough in your response, if asked for detailed reponse provide a detailed one
 7. Never make up information not present in the context
 
 Answer:""",
@@ -98,18 +98,19 @@ Answer:""",
 Conversation History:
 {conversation_history}
 
-🌐 Web Search Results:
+🌐 Web Search Results (with page content):
 {web_context}
 
 User Question: {question}
 
 Instructions:
 1. Consider the conversation history to provide contextual answers
-2. Answer based on the web search results provided above
-3. Cite sources using the format [Web: Source Title] for every piece of information
-4. If the web results don't contain the answer, clearly state that the search didn't return relevant results
-5. Be concise but thorough in your response
-6. Always indicate when information comes from web sources
+2. CAREFULLY READ ALL the web content provided above - it contains detailed information
+3. Extract specific facts, numbers, statistics, and data from the content
+4. When you find relevant information, include it with the source: [Web: Source Title]
+5. If the content contains data/statistics, present them clearly (lists, bullet points, etc.)
+6. Synthesize information from multiple sources when relevant
+7. If truly no relevant information exists in the content, say so - but look carefully first
 
 Answer:""",
             input_variables=["conversation_history", "web_context", "question"]
